@@ -6,37 +6,45 @@ investigation of the **actual** UniFi auth + VPN flow. This replaces the old pre
 Read first: [`AGENTS.md`](AGENTS.md) (rules), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`DECISIONS.md`](DECISIONS.md)
 (ADR-0001…0015), [`docs/02`](docs/02-vpn-protocol-and-reference-clients.md) (protocol).
 
-## → Current decision & next step (end of Mac session, 2026-07-30)
+## → Current decision & next step (Bazzite session, 2026-07-30 — REVISED)
 
-The capture is **done** (`docs/08`). The two decisions the owner made:
+The capture is **done** (`docs/08`). **This supersedes the earlier "pragmatic, NOT Teleport" note** from the Mac
+session — the owner reconsidered once we established that (a) the *newer* native path is un-RE'd by anyone and
+auth-walled, while (b) the *older* **Teleport** flow is fully reverse-engineered in **two clean-room references**,
+so the scary part (creds → real tunnel through NAT) is already solved and just needs **porting**.
 
-**1. VPN direction — pragmatic, NOT full Teleport.** We are **not** building the userspace WireGuard + ICE/TURN
-stack (doc 08, option 1). For the owner's **own** console, use the simplest thing that works, chosen **by testing
-on Bazzite**:
-- **Option 2 — direct WireGuard to the console** if its One-Click / `id.ui.direct` / public-DDNS endpoint is
-  reachable and dialable → provision + hand to NetworkManager (ADR-0004).
-- **Option 3 — the console's built-in WireGuard Server** (Settings → VPN → WireGuard) → export `.conf` →
-  NetworkManager. Zero UID reverse-engineering; the reliable fallback. `tern-linux/src/nm.rs` already imports this.
+**Decision (ADR-0016): build the VPN engine by porting Teleport to Rust.** In-process userspace WireGuard over
+ICE/STUN(+TURN) inside `ternd` — permissive crates only (`boringtun`/`wireguard-rs`, `str0m`/`webrtc-rs`,
+`smoltcp`; **never sing-box/GPL**, ADR-0007). References: **`darki73/telepy-cli`** (Python, most complete) and
+**`sinnet3000/teleport-client`** (Go). Auth = the SSO-cookie flow (`api/sso/v1/login` + TOTP → `UBIC_AUTH`,
+already validated; ADR-0009 revised). This makes ADR-0004 (NetworkManager) a **fallback** for the directly-dialable
+case only.
 
-The captured UID control plane (doc 08: `Identity-Hub` JWT → `remote-credentials` → TURN) is **only needed for the
-full auto-provisioning flow** — parked unless option 2 turns out to need it.
+**⚠️ Gate before the big port (do this FIRST):** the owner's account was captured on the *newer* chain (doc 08),
+but the references implement the *older* Teleport chain — so **validate that `telepy-cli` actually connects to the
+owner's console today.** Run it with the owner's creds (owner types password/TOTP). Outcome:
+- **connects** → port telepy wholesale (control + data plane).
+- **doesn't** → port telepy's **data plane**, take the **control plane** from doc 08 (client-side-probe the one
+  gap: how the `Identity-Hub` JWT is minted, using the working `UBIC_AUTH` session).
 
-**2. Where to work next — HAND OFF TO THE LINUX HOST (Bazzite).** The Mac's unique value (the real app + the
-traffic capture) is spent. Everything remaining is Linux-runtime or real-account and **cannot be done or verified
-on the Mac**: the actual VPN connect, NetworkManager/GVfs/tray runtime, and probing the real API as a client.
-Continuing on the Mac would be speculative. Proceed on Bazzite.
+**Where to work: Bazzite (here).** The Mac's value (real app + capture) is spent; everything left is Linux-runtime
+and portable Rust — buildable/testable here (and `tern-core` builds on macOS too if needed).
 
-### Bazzite work queue (in order)
-1. **Pick the VPN option.** On the console, open Settings → VPN. If a reachable One-Click/WireGuard endpoint
-   exists, try option 2; otherwise create a **WireGuard Server** client and export its `.conf` (option 3).
-2. **`tern-linux/src/nm.rs`** — import that config (`nmcli connection import type wireguard …`), bring it up as a
-   **user-owned** connection, confirm password-free toggle (ADR-0004). This is the core of "it actually connects."
-3. **Wire it end-to-end** — daemon `Connect`/`Disconnect` → real NM; confirm `tern-gui` toggle + tray reflect the
-   real tunnel state (`nmcli connection show --active`).
-4. **Drives** — `tern-linux/src/gvfs.rs`: mount the UNAS SMB shares over the tunnel (creds from keyring); the
-   per-drive auto-mount UI already exists.
-5. **(Optional, only if you pursue auto-provisioning)** probe the `Identity-Hub` JWT mint per `docs/08` (log in via
-   `sso.ui.com` password+TOTP → `UBIC_AUTH`, then probe the credential/identity-hub endpoints as a client).
+### Bazzite work queue (in order — ADR-0016 build stages)
+1. **Validate the reference** — clone `telepy-cli`, run end-to-end with the owner's creds; confirm a tunnel comes up
+   and a LAN host is reachable. (Go/no-go for a clean port vs port+patch.)
+2. **Port stage ① auth** — `tern-core`: SSO login (`api/sso/v1/login` + TOTP → `UBIC_AUTH`), already validated;
+   turn the throwaway probe into real code + keyring storage.
+3. **Port stage ② directory / cloud creds** — console directory + short-lived creds (SigV4 for the old chain, or the
+   doc-08 `user-token`→`remote-credentials` chain).
+4. **Port stage ③ signaling** — MQTT (AWS IoT) + HTTPS: exchange WG keys + ICE candidates.
+5. **Port stage ④ ICE/STUN(+TURN)** — `str0m`/`webrtc-rs`; establish the transport (direct or Cloudflare-TURN relay).
+6. **Port stage ⑤ userspace WireGuard + netstack** — `boringtun` + `smoltcp` (or TUN); route selected subnets.
+7. **Integrate** — wire the engine to `ternd` `Connect`/`Disconnect`, the GUI toggle + tray state, then drives
+   (`gvfs.rs`, SMB over the tunnel, creds from keyring). Much of this scaffolding already exists.
+
+**Fallback (if the port stalls or the owner just wants reachability):** the console's built-in **WireGuard Server**
+→ export `.conf` → `tern-linux/src/nm.rs` (NetworkManager). Works today; explicitly *not* the product.
 
 _Mac cleanup done: mitmproxy + its CA removed, system proxy off, captured traffic (secrets) discarded — none of it
 ever entered the repo._

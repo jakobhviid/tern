@@ -55,7 +55,12 @@ crates/
 A `StubBackend` in `tern-core` (behind a test/dev feature) lets the CLI exercise the full flow on macOS.
 **Revisit if:** crate count feels heavy — `tern-linux` could fold into `ternd` behind `cfg`.
 
-## ADR-0004 — VPN control: delegate to NetworkManager 🟢
+## ADR-0004 — VPN control: delegate to NetworkManager 🟠 REVISED → see ADR-0016
+> **REVISED 2026-07-30 (after the live capture, doc 08).** One-Click has **no dialable endpoint** — it's
+> ICE/TURN-relayed userspace WireGuard — so NetworkManager can't carry it. ADR-0016 makes the **primary** VPN
+> path an **in-process userspace WireGuard-over-ICE/TURN** engine (ported from telepy). **NetworkManager is
+> demoted to a *fallback*** for the directly-dialable case only (the console's built-in WireGuard Server, or a
+> reachable `id.ui.direct`/DDNS endpoint). The rest of this ADR still applies to that fallback.
 **Context:** Bringing a WireGuard tunnel up needs root/CAP_NET_ADMIN. One-Click VPN config is fetched per
 session from the UCS API (doc 02), not a static file.
 **Options:** own root helper + `wg`; `wg-quick` via `pkexec` (broad, ugly); userspace boringtun in-process
@@ -89,6 +94,11 @@ GUI is partly testable here.
 **Revisit if:** relm4 friction outweighs benefit → drop to raw gtk4-rs (same widgets).
 
 ## ADR-0007 — Licensing posture: permissive (MIT), keep GPL out-of-process 🟢
+> **REAFFIRMED 2026-07-30, now load-bearing.** ADR-0016 ports a userspace WireGuard + ICE stack **in-process** —
+> which is exactly where the GPL trap bites. The macOS app uses **sing-box (GPL-3)** for this; we must **not**.
+> Use only permissive primitives: **`boringtun`** (BSD) / `wireguard-rs`, **`str0m`** or `webrtc-rs` (ICE/STUN/
+> TURN, MIT/Apache), **`smoltcp`** (userspace netstack, 0BSD/MIT). This constraint is *the* reason we port from
+> the (MIT) `telepy-cli` design rather than embed any Ubiquiti/sing-box code. Enforced by `cargo deny`.
 **Decision:** App code **MIT** (matches temper/amdl/dotsync). Get userspace WireGuard from permissive
 primitives if ever needed (wireguard-go/MIT, boringtun/BSD, gVisor/Apache) — **never** in-process-link
 **sing-box (GPL-3)** or **libsmbclient (GPL-3)**; reach SMB via GVfs/exec. Reuse the two **MIT** reference
@@ -105,7 +115,13 @@ jakobhviid/homebrew-tap yet** (owner instruction).
 **Why:** Meets the test machine where it lives; sandbox story is clean with the delegated design.
 **Revisit if:** Flatpak can't drive NM/GVfs acceptably on Bazzite → lead with native rpm + a systemd user service.
 
-## ADR-0009 — Auth: system-browser SSO (passkey-compatible), loopback callback 🟢
+## ADR-0009 — Auth: system-browser SSO (passkey-compatible), loopback callback 🟠 REVISED → see ADR-0016
+> **REVISED 2026-07-30.** For a **consumer** account this browser-OAuth-with-`client_id` model is wrong: the
+> `sso.ui.com/oauth2` server is the *enterprise* "SSO Apps" feature and rejects any client we have. The real,
+> **validated** path is the telepy-style **SSO-cookie flow** — `POST sso.ui.com/api/sso/v1/login`
+> (`user`+`password`+TOTP) → `UBIC_AUTH` → short-lived cloud creds — which ADR-0016 adopts. The **PKCE + loopback
+> mechanism code stays** (generic, unit-tested, reusable), but is not the product path. **Passkey login is
+> deferred** (it needs the pinned browser flow + a device-code approval we couldn't pin — TODO/doc 08).
 **Context:** The Mac app signs in via the system browser (handles MFA + enterprise SAML/IdP transparently),
 then uses the resulting session for the UCS API (doc 02 UPDATE). **Owner note: the login flow often uses
 passkeys (WebAuthn/FIDO2).**
@@ -212,3 +228,37 @@ unchanged; only the *daemon's* bus/interface name gains the `.Daemon` suffix.
 session bus; `tern status` and the GUI both render "Not signed in"; the GUI no longer aborts at registration.
 **Revisit if:** the owner renames the product (grep `phd.hviid.Tern`); if a future single-binary/monolith mode
 (ADR-0002 fallback) runs the engine inside the GUI process, the split is moot (one process owns the app-id).
+
+## ADR-0016 — VPN data plane: port Teleport (userspace WireGuard over ICE/TURN) to Rust 🟡
+**Context:** The live capture (doc 08) settled how One-Click actually works: it is **Teleport-shaped** — no
+dialable endpoint, a coordination call returns **TURN creds + a `directAccessDomain`**, and the tunnel is
+**userspace WireGuard carried over ICE/WebRTC** (direct when reachable, Cloudflare-TURN-relayed when NAT'd).
+The *newer* native chain (`Identity-Hub` JWT → `remote-credentials` → Cloudflare TURN) is **undocumented and
+un-RE'd by anyone** (confirmed by search); the *older* consumer-**Teleport** chain is fully reverse-engineered in
+two clean-room references — **`darki73/telepy-cli`** (Python, most complete: SSO+MFA → cloud creds → console
+directory → AWS-IoT-MQTT+HTTPS signaling → ICE/STUN → from-scratch WireGuard + userspace TCP/IP or TUN) and
+**`sinnet3000/teleport-client`** (Go: in-process WG, STUN, SOCKS). Owner decision: **Teleport is good enough**
+for the goal; **Python is not** shippable here → **port it to Rust.**
+**Options weighed:** (a) build the *newer* Identity-Hub/Cloudflare path — no reference, auth-walled, moving target
+(rejected); (b) embed sing-box/wireguard-go out-of-process — GPL + heavy (rejected, ADR-0007); (c) shell out to
+telepy (Python runtime dep in a Rust/Flatpak app — rejected); (d) **port the Teleport design to Rust with
+permissive crates** (chosen).
+**Decision:** Implement the VPN engine **in-process in `ternd`** as a Rust port of the Teleport flow, using
+**`boringtun`/`wireguard-rs`** (userspace WG), **`str0m`/`webrtc-rs`** (ICE/STUN/TURN), **`smoltcp`** (userspace
+netstack) or a TUN for system-wide, and an MQTT client for signaling. Auth = the SSO-cookie flow (ADR-0009
+revised). This **supersedes ADR-0004 as the primary path** (NetworkManager kept only as the directly-dialable
+fallback) and **retires the `ucs.rs` `vpn/session`→plain-config assumption** (doc 08: no such endpoint).
+**Build order (staged, each independently testable):** ① SSO auth (have it, validated) → ② console directory /
+cloud creds → ③ signaling (MQTT+HTTPS, key + ICE-candidate exchange) → ④ ICE/STUN(+TURN) → ⑤ userspace WireGuard
++ netstack → ⑥ wire into the engine/daemon/tray/drives that already exist.
+**Why:** The discovery risk is gone (two references document the wire format); what remains is a bounded port with
+permissive crates that keeps us MIT. It delivers the *actual* flow (tern's whole reason to exist), not a
+hand-rolled `.conf` wrapper.
+**Confidence / gate 🟡:** the owner's account was captured on the *newer* chain (doc 08), while the references
+implement the *older* Teleport chain. **Before the big port, validate `telepy-cli` connects to the owner's
+console today.** If yes → port it wholesale. If the old chain is retired for the account → port telepy's **data
+plane** but take the **control plane** from doc 08 (client-side-probe the one gap: how the `Identity-Hub` JWT is
+minted). Either way the data-plane port is the same work.
+**Revisit if:** Ubiquiti fully retires the Teleport/MQTT signaling for consumer accounts (then only the doc-08
+chain remains — port data plane, RE the control plane), or a directly-dialable path (ADR-0004 fallback) turns out
+to cover the owner's real need (then this large port may be unnecessary for *this* user).
