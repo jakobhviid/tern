@@ -215,13 +215,25 @@ fn candidate_score(c: &Candidate) -> i32 {
 }
 
 /// A paired Teleport session, obtained by redeeming an invite (`REQUEST_ACCESS` → `ACCESS_GRANTED`). The
-/// `token`/`secret` authenticate subsequent signaling; `device_token` is the invite-derived token.
-#[derive(Debug, Clone)]
+/// `token`/`secret` authenticate subsequent signaling; `device_token` is the invite-derived token. It's
+/// reusable, so it's serialized and kept (keyring) — the single-use invite is only needed once.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub token: String,
     pub secret: String,
     pub device_token: String,
 }
+
+/// Random standard-base64 of `n` bytes — the per-connection STUN session secret (`randomB64`).
+fn random_b64(n: usize) -> String {
+    use rand_core::RngCore;
+    let mut b = vec![0u8; n];
+    rand_core::OsRng.fill_bytes(&mut b);
+    base64::engine::general_purpose::STANDARD.encode(b)
+}
+
+/// Poll interval for the console-facing signaling loops (`responsePollInterval`).
+const POLL_INTERVAL: Duration = Duration::from_millis(600);
 
 /// A random v4 UUID (for the `client_id` sent with `REQUEST_ACCESS`). Ports the reference `randomUUID`.
 fn random_uuid() -> String {
@@ -337,6 +349,65 @@ impl Broker {
         }
         Ok(Session { token: granted.token, secret: granted.secret, device_token })
     }
+
+    /// Fetch the ICE (STUN/TURN) configuration for a paired session (`GET_ICE_CONFIGURATION`).
+    pub async fn fetch_ice(&self, session: &Session) -> Result<Vec<IceServer>> {
+        let body = serde_json::json!({
+            "token": session.token,
+            "payload": { "request_type": "GET_ICE_CONFIGURATION", "secret": session.secret }
+        });
+        let req = self.request(reqwest::Method::POST, "/", "", Some(&body)).await?;
+        let resp = self
+            .poll(&session.token, &req.request_id, "ICE_CONFIGURATION", POLL_INTERVAL, 100)
+            .await?
+            .ok_or_else(|| Error::Other(anyhow::anyhow!("teleport: timed out waiting for ICE_CONFIGURATION")))?;
+        let _ = self
+            .request(reqwest::Method::DELETE, &format!("/{}", req.request_id), &session.token, None)
+            .await;
+        Ok(resp.ice)
+    }
+
+    /// Send our connect offer (WG public key + a per-connection STUN session secret + our candidates + the
+    /// ICE config) and await the console's `CONNECT_RESPONSE` (its candidates + WireGuard key + tunnel
+    /// address). Ports `connectAndAwaitResponse`.
+    pub async fn connect(
+        &self,
+        session: &Session,
+        wg_pub_key: &str,
+        stun_secret: &str,
+        client_name: &str,
+        local: &[Candidate],
+        ice: &[IceServer],
+    ) -> Result<BrokerResponse> {
+        let peer_desc = PeerDesc { candidates: local.to_vec(), ice_config: ice.to_vec(), is_master: false };
+        let body = serde_json::json!({
+            "token": session.token,
+            "payload": {
+                "request_type": "CONNECT",
+                "secret": session.secret,
+                "client_name": client_name,
+                "client_info": {
+                    "wg_pub_key": wg_pub_key,
+                    "stun_session_secret": stun_secret,
+                    "peer_desc": peer_desc,
+                }
+            }
+        });
+        let req = self.request(reqwest::Method::POST, "/", "", Some(&body)).await?;
+        let resp = self
+            .poll(&session.token, &req.request_id, "CONNECT_RESPONSE", POLL_INTERVAL, 200)
+            .await?
+            .ok_or_else(|| Error::Other(anyhow::anyhow!("teleport: timed out waiting for CONNECT_RESPONSE")))?;
+        let _ = self
+            .request(reqwest::Method::DELETE, &format!("/{}", req.request_id), &session.token, None)
+            .await;
+        Ok(resp)
+    }
+}
+
+/// A per-connection STUN session secret (exposed for callers that drive connect + nomination together).
+pub fn new_stun_secret() -> String {
+    random_b64(32)
 }
 
 fn invalid(input: &str) -> Error {
