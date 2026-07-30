@@ -98,10 +98,13 @@ impl Snapshot {
     /// The one-line status shown in the tray header / tooltip.
     pub fn summary_line(&self) -> String {
         match &self.auth {
-            Auth::SignedOut => return "Not signed in".to_string(),
             Auth::SigningIn => return "Signing you in…".to_string(),
             Auth::SessionExpired => return "Session expired".to_string(),
-            Auth::SignedIn(_) => {}
+            // Signed out with nothing running = genuinely idle. But a Teleport invite or an imported config
+            // brings a tunnel up *without* an account (ADR-0016/0004), so fall through to the Access line
+            // when Access isn't Off — otherwise "Not signed in" would show while connected.
+            Auth::SignedOut if self.access == Access::Off => return "Not signed in".to_string(),
+            Auth::SignedOut | Auth::SignedIn(_) => {}
         }
         let access = match self.access {
             Access::Off => "Access off",
@@ -126,15 +129,18 @@ impl Snapshot {
     /// The tray icon visual (docs/05 §5).
     pub fn tray_visual(&self) -> TrayVisual {
         match &self.auth {
-            Auth::SignedOut => TrayVisual::Neutral,
-            Auth::SigningIn => TrayVisual::Working,
-            Auth::SessionExpired => TrayVisual::Warning,
-            Auth::SignedIn(_) => match self.access {
-                Access::Off => TrayVisual::Neutral,
-                Access::TurningOn => TrayVisual::Working,
-                Access::On => TrayVisual::Active,
-                Access::Degraded | Access::Unreachable => TrayVisual::Warning,
-            },
+            Auth::SigningIn => return TrayVisual::Working,
+            Auth::SessionExpired => return TrayVisual::Warning,
+            // As with summary_line: a Teleport/imported tunnel can be up while signed out, so reflect Access
+            // rather than always showing Neutral.
+            Auth::SignedOut if self.access == Access::Off => return TrayVisual::Neutral,
+            Auth::SignedOut | Auth::SignedIn(_) => {}
+        }
+        match self.access {
+            Access::Off => TrayVisual::Neutral,
+            Access::TurningOn => TrayVisual::Working,
+            Access::On => TrayVisual::Active,
+            Access::Degraded | Access::Unreachable => TrayVisual::Warning,
         }
     }
 }
@@ -158,6 +164,19 @@ mod tests {
     fn summary_reflects_signed_out() {
         assert_eq!(Snapshot::signed_out().summary_line(), "Not signed in");
         assert_eq!(Snapshot::signed_out().tray_visual(), TrayVisual::Neutral);
+    }
+
+    #[test]
+    fn accountless_teleport_connection_reflects_access_not_signed_out() {
+        // A Teleport invite (or imported config) brings a tunnel up without an account: auth stays SignedOut
+        // but the status must show the tunnel, not "Not signed in".
+        let s = Snapshot { auth: Auth::SignedOut, access: Access::On, drives: vec![] };
+        assert_eq!(s.summary_line(), "Access on");
+        assert_eq!(s.tray_visual(), TrayVisual::Active);
+
+        let turning = Snapshot { auth: Auth::SignedOut, access: Access::TurningOn, drives: vec![] };
+        assert_eq!(turning.summary_line(), "Turning on Access…");
+        assert_eq!(turning.tray_visual(), TrayVisual::Working);
     }
 
     #[test]
