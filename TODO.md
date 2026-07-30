@@ -80,9 +80,16 @@ needs a **one-time privilege grant** (`setcap cap_net_admin` on the daemon, or `
    **Live-test both stages:** `cargo build -p tern-core --example teleport_tunnel_probe` then
    `sudo ./target/debug/examples/teleport_tunnel_probe <teleport.ui.link invite | saved-session.json>` — it pairs
    (or reuses a session), connects, nominates, brings up `tern0`, routes the console's `/24`, and pings the gateway.
-6. **⬜ Integrate** — a `TeleportBackend` implementing `VpnBackend`; wire `ternd` `Connect`/`Disconnect`, the GUI +
-   tray state, and the invite-input UX (paste field / `tern connect --invite <url>`); persist the reusable session
-   in the keyring so the single-use invite isn't needed again. Then drives (`gvfs.rs`, SMB over the tunnel).
+6. **✅ Integrate (built; connect path pending a live run)** — `TeleportVpn` backend seam (`redeem`/`up`/`down`/
+   `is_up`) with a real `tern-linux::teleport::TeleportVpnBackend` (runs `teleport::establish` + iproute2) and a
+   `StubBackend` impl for tests. The engine drives the lifecycle: `redeem_invite` (pair → persist session in the
+   keyring → bring up), `connect` reconnects a stored session via the Access toggle, `disconnect`/`sign_out` tear
+   down + forget, `restore_teleport_session` on startup. Wired through `ternd` (`redeem_invite` D-Bus method +
+   startup restore), the CLI (`tern redeem`/`tern import`), and the GUI (invite paste → `RedeemInvite`; tray
+   connect/disconnect; console web-UI link). Packaging grants `CAP_NET_ADMIN` via `setcap` (systemd --user can't).
+   **Still open:** routing (only the connected subnet is added — AllowedIPs/full-tunnel + subnet-subtract), DNS
+   (`dns_addrs` not applied to the interface), and the drives path (`gvfs.rs`, SMB over the tunnel). These want the
+   live data-plane confirmation first (the `teleport_tunnel_probe` sudo run).
 7. **⬜ (Later) off-LAN validation** — run from a remote network to exercise the reflexive/TURN path (the live
    validation so far was on-LAN, so only the direct candidate was tested).
 

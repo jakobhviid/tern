@@ -273,6 +273,17 @@ for `ip_network`/`ip_network_table` (pulled by boringtun) — same permissive fa
 Both stages are unit-tested for their pure parts and exercised end-to-end by `examples/teleport_tunnel_probe`
 (needs `cap_net_admin`); a live console run is the remaining confirmation. Routing (AllowedIPs) stays in the
 backend, not the data-plane module.
+**Integration (2026-07-31, stage ⑥):** rather than force Teleport through `VpnBackend` (which takes a static
+`WireguardConfig`), added a **`TeleportVpn`** trait — `redeem` (broker pairing, no privilege), `up(session)`
+(the live connect→nominate→TUN data plane), `down`, `is_up` — so the invite→session then session→tunnel shape
+is explicit. `tern-linux::teleport::TeleportVpnBackend` implements it (runs `teleport::establish`, configures
+`tern0` with **iproute2** because in-process netlink is SELinux-denied even as root); `StubBackend` implements it
+so the engine orchestration is fully unit-tested without privilege. The engine owns the session lifecycle
+(redeem→persist in keyring→up; Access-toggle reconnect; disconnect/sign-out teardown+forget; startup restore),
+surfaced through `ternd` (`redeem_invite` + startup restore), the CLI (`tern redeem`/`tern import`), and the GUI/
+tray. The daemon gets `CAP_NET_ADMIN` from a **file capability** (`setcap cap_net_admin+ep`), since a systemd
+`--user` unit can't be granted ambient caps. **Live confirmation of the data plane (handshake + return traffic)
+and richer routing/DNS remain open** — deliberately not guessed at before the sudo probe run.
 **Revisit if:** Ubiquiti fully retires the Teleport/MQTT signaling for consumer accounts (then only the doc-08
 chain remains — port data plane, RE the control plane), or a directly-dialable path (ADR-0004 fallback) turns out
 to cover the owner's real need (then this large port may be unnecessary for *this* user).
