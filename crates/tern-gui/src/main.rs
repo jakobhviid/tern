@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 use gtk::glib;
 use ksni::blocking::TrayMethods;
 use tern_core::ipc::BUS_NAME;
-use tern_core::state::{Access, Snapshot};
+use tern_core::state::{Access, Auth, Snapshot};
 
 mod tray;
 use tray::TernTray;
@@ -237,6 +237,8 @@ fn build_ui(
     let window_loop = window.clone();
     let cmd_tx_rows = cmd_tx.clone();
     glib::spawn_future_local(async move {
+        let mut prev_access: Option<Access> = None;
+        let mut was_expired = false;
         while let Ok(update) = update_rx.recv().await {
             match update {
                 Update::Present => window_loop.present(),
@@ -287,6 +289,25 @@ fn build_ui(
                         let s = (*snap).clone();
                         h.update(move |t| t.snapshot = s);
                     }
+
+                    // Notifications for the few states worth acting on (docs/05 §6).
+                    let expired = matches!(snap.auth, Auth::SessionExpired);
+                    if expired && !was_expired {
+                        notify("Session expired", "Sign in again to stay connected.");
+                    }
+                    was_expired = expired;
+                    if let Some(prev) = prev_access {
+                        if snap.access != prev {
+                            match snap.access {
+                                Access::Degraded => notify("Access isn't working", "Reconnecting may help."),
+                                Access::Unreachable => {
+                                    notify("Can't reach your network", "Try again in a moment.")
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    prev_access = Some(snap.access);
                 }
             }
         }
@@ -294,6 +315,14 @@ fn build_ui(
 
     let _ = cmd_tx.try_send(Cmd::Refresh);
     window.present();
+}
+
+fn notify(summary: &str, body: &str) {
+    let _ = notify_rust::Notification::new()
+        .summary(summary)
+        .body(body)
+        .appname("Tern")
+        .show();
 }
 
 fn access_subtitle(a: Access) -> &'static str {
