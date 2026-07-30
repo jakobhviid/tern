@@ -3,10 +3,12 @@
 //! Internal machinery (WireGuard, UCS sessions, SMB) is deliberately *not* modelled here — this is the
 //! small set of states a person experiences, each mapping to one label + one recovery action.
 
+use serde::{Deserialize, Serialize};
+
 use crate::model::{Drive, Identity};
 
 /// Overall sign-in state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Auth {
     SignedOut,
     SigningIn,
@@ -15,7 +17,7 @@ pub enum Auth {
 }
 
 /// The "Access" (VPN) state as the user experiences it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Access {
     Off,
     TurningOn,
@@ -27,7 +29,7 @@ pub enum Access {
 }
 
 /// Per-drive state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DriveMount {
     /// Selected but nothing attempted yet.
     Idle,
@@ -59,14 +61,14 @@ impl DriveMount {
 }
 
 /// A drive plus its current mount state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DriveStatus {
     pub drive: Drive,
     pub state: DriveMount,
 }
 
 /// The overall tray/menu-bar visual state (docs/05 §5) — kept to a handful a person can read at a glance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrayVisual {
     /// Off / neutral (signed out, or Access off).
     Neutral,
@@ -79,7 +81,7 @@ pub enum TrayVisual {
 }
 
 /// A consistent snapshot of everything the UI renders. Produced by the daemon; consumed by tray/GUI/CLI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     pub auth: Auth,
     pub access: Access,

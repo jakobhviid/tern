@@ -1,0 +1,24 @@
+[package]
+name = "ternd"
+description = "Background service for the tern UniFi Identity client (session + orchestration; session-bus D-Bus API)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ternd"
+path = "src/main.rs"
+
+[dependencies]
+tern-core = { path = "../tern-core" }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zbus.workspace = true

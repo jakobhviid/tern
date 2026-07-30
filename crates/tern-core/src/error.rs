@@ -4,8 +4,10 @@
 //! [`UserAction`]. Raw technical text (HTTP codes, D-Bus errors, host IDs, stack traces) never goes in the
 //! title — it belongs only in the "Copy details for support" affordance, carried separately.
 
+use serde::{Deserialize, Serialize};
+
 /// The single recovery action offered for a problem — drives the primary button in the UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserAction {
     /// Nothing to do (informational / auto-recovering).
     None,
@@ -51,7 +53,7 @@ impl UserAction {
 }
 
 /// A user-facing rendering of a problem: one calm line, optional short detail, and a recovery action.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserFacing {
     pub title: String,
     pub detail: Option<String>,
