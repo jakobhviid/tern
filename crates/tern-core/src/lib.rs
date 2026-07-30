@@ -17,6 +17,7 @@ pub mod error;
 pub mod ipc;
 pub mod model;
 pub mod state;
+pub mod teleport;
 pub mod ucs;
 pub mod wg;
 

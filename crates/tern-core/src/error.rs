@@ -89,6 +89,9 @@ pub enum Error {
     AccountRestricted(String),
     #[error("this workspace is blocked by policy")]
     WorkspaceBlocked,
+    /// The pasted Teleport invite link/code isn't a valid invite.
+    #[error("invalid teleport invite: {0}")]
+    InvalidInvite(String),
 
     // ---- VPN / access ----
     #[error("no console available for this account")]
@@ -159,6 +162,10 @@ impl Error {
             WorkspaceBlocked => UserFacing::new(
                 "This workspace is blocked by your organization's policy. Contact your admin.",
                 A::ContactAdmin,
+            ),
+            InvalidInvite(_) => UserFacing::new(
+                "That invite link doesn't look right. Copy it again from your console.",
+                A::Retry,
             ),
             NoConsoleAvailable => UserFacing::new(
                 "Your network isn't available right now. Try again in a moment.",
@@ -245,6 +252,7 @@ mod tests {
             Error::KeyringLocked,
             Error::Offline,
             Error::Http("500 Internal Server Error".into()),
+            Error::InvalidInvite("https://teleport.ui.link/not-a-uuid".into()),
         ];
         // Whole words we must never leak into a user-facing title (docs/05 anti-patterns). Matched
         // per-token so a term like "ice" doesn't false-positive inside "service".
