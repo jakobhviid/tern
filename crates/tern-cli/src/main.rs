@@ -21,6 +21,8 @@ Commands:
   tern sign-out                   sign out
   tern connect <CONSOLE_ID>       turn on Access (One-Click VPN) for a console
   tern disconnect                 turn off Access
+  tern redeem <INVITE>            redeem a Teleport invite (teleport.ui.link/…) and connect
+  tern import <FILE>              import a plain WireGuard .conf and connect
   tern drives                     list drives and their mount state
   tern drives enable <DRIVE_ID>   auto-mount this drive when reachable
   tern drives disable <DRIVE_ID>  stop auto-mounting this drive
@@ -43,6 +45,8 @@ trait Tern {
     async fn sign_out(&self) -> zbus::Result<String>;
     async fn connect(&self, console_id: &str) -> zbus::Result<String>;
     async fn disconnect(&self) -> zbus::Result<String>;
+    async fn redeem_invite(&self, url: &str) -> zbus::Result<String>;
+    async fn import_wireguard(&self, conf: &str) -> zbus::Result<String>;
     async fn set_auto_mount(&self, drive_id: &str, on: bool) -> zbus::Result<String>;
 }
 
@@ -75,6 +79,10 @@ enum Command {
     Connect { console_id: String },
     /// Turn off Access.
     Disconnect,
+    /// Redeem a Teleport invite (`teleport.ui.link/<uuid>`) and bring up the tunnel.
+    Redeem { invite: String },
+    /// Import a plain WireGuard `.conf` (the console's built-in server, or any peer) and connect.
+    Import { file: std::path::PathBuf },
     /// List drives, or toggle whether one auto-mounts.
     Drives {
         #[command(subcommand)]
@@ -138,6 +146,12 @@ async fn main() -> Result<()> {
         Command::SignOut => render_action(&proxy.sign_out().await?, cli.json)?,
         Command::Connect { console_id } => render_action(&proxy.connect(&console_id).await?, cli.json)?,
         Command::Disconnect => render_action(&proxy.disconnect().await?, cli.json)?,
+        Command::Redeem { invite } => render_action(&proxy.redeem_invite(&invite).await?, cli.json)?,
+        Command::Import { file } => {
+            let conf = std::fs::read_to_string(&file)
+                .with_context(|| format!("reading {}", file.display()))?;
+            render_action(&proxy.import_wireguard(&conf).await?, cli.json)?
+        }
         Command::Drives { action } => match action {
             None => render_drives(&proxy.snapshot().await?, cli.json)?,
             Some(DrivesAction::Enable { drive_id }) => {
