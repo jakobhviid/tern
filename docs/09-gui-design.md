@@ -472,3 +472,21 @@ widgets apply either way. Guidance:
 calm Access toggle + honest drive checklist when paired, one banner/toast + one button on every failure — and the
 daemon gains a handful of Teleport-era methods (chiefly `RedeemInvite` and `Reconnect`) that the current
 OAuth-era interface is missing.
+
+---
+
+## 12. Owner-requested additions (backlog — confirmed, not the current build)
+
+Recorded so they aren't lost; add to the window later:
+
+- **Top link row → the console web UI.** An `AdwPreferencesGroup` at the very top of the main view holding one
+  row (an `AdwActionRow`/`AdwButtonRow` with a link/"external" affordance) that opens **`https://unifi.ui.com`**
+  in the **default browser** (`gtk::UriLauncher::launch`). Sits above the Access group.
+- **"Detect shares" group at the bottom.** An `AdwPreferencesGroup` below the drives list with an action to
+  **scan/detect available SMB shares** on the reachable network and offer to add them as drives — complements
+  the per-drive auto-mount UX.
+- **Notifications are a firm feature** (owner override of "quiet by default"): keep desktop notifications
+  (freedesktop/KDE) for every meaningful Access transition — Connected / Disconnected / degraded / unreachable —
+  and connect/disconnect available from the tray (SNI) menu. *(Done.)*
+- **Import a plain WireGuard `.conf`** as a fallback tunnel (console's built-in WireGuard Server), independent of
+  sign-in. *(Done — "Import a WireGuard config…" in onboarding → `ImportWireguard`.)*
