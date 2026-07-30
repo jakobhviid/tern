@@ -145,7 +145,11 @@ impl Engine {
         // Teleport mode (ADR-0016): a redeemed session reconnects here without needing the invite again.
         if let Some(session) = self.teleport_session.clone() {
             self.access = Access::TurningOn;
-            self.teleport.up(&session).await?;
+            if let Err(e) = self.teleport.up(&session).await {
+                // Don't leave the UI stuck on "Turning on…" if bring-up fails.
+                self.access = Access::Off;
+                return Err(e);
+            }
             if !self.teleport.is_up().await? {
                 self.access = Access::Unreachable;
                 return Err(Error::VpnUnreachable);
@@ -517,6 +521,52 @@ mod tests {
         // Forget drops the persisted session; reconnect then needs a new invite.
         engine.forget_teleport().await.unwrap();
         assert!(engine.secrets.get(TELEPORT_SESSION_KEY).await.unwrap().is_none());
+    }
+
+    /// A Teleport backend whose bring-up always fails (e.g. missing CAP_NET_ADMIN), to check the engine
+    /// doesn't get stuck mid-transition.
+    struct FailingTeleport;
+    #[async_trait::async_trait]
+    impl crate::backend::TeleportVpn for FailingTeleport {
+        async fn redeem(&self, invite: &crate::teleport::Invite) -> Result<Session> {
+            Ok(Session { token: format!("t-{}", invite.id), secret: "s".into(), device_token: "d".into() })
+        }
+        async fn up(&self, _s: &Session) -> Result<()> {
+            Err(Error::PrivilegeRequired)
+        }
+        async fn down(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn is_up(&self) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_teleport_reconnect_does_not_stick_on_turning_on() {
+        let server = MockServer::start().await;
+        let ucs = UcsClient::new(Endpoints { sso: "https://sso.ui.com".into(), api_gw: server.uri() });
+        let stub = Arc::new(StubBackend::new());
+        let mut engine = Engine::new(
+            ucs,
+            stub.clone(),
+            Arc::new(FailingTeleport),
+            stub.clone(),
+            stub.clone(),
+            stub.clone(),
+            Config::default(),
+        );
+        engine
+            .secrets
+            .set(TELEPORT_SESSION_KEY, r#"{"token":"t","secret":"s","device_token":"d"}"#)
+            .await
+            .unwrap();
+        assert!(engine.restore_teleport_session().await.unwrap());
+
+        let err = engine.connect("").await.unwrap_err();
+        assert!(matches!(err, Error::PrivilegeRequired));
+        // Must not be left on "Turning on…".
+        assert_eq!(engine.snapshot().await.access, Access::Off);
     }
 
     #[tokio::test]
