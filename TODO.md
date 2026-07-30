@@ -38,24 +38,31 @@ LAN console** (`192.168.1.1` and `192.168.60.1`). So:
 **Where to work: Bazzite (here).** The Mac's value (real app + capture) is spent; everything left is Linux-runtime
 and portable Rust — buildable/testable here (and `tern-core` builds on macOS too if needed).
 
-### Bazzite work queue (in order — ADR-0016 build stages; port from the **Go client**)
-1. **✅ Validate the reference** — DONE (Go client connects end-to-end via a `teleport.ui.link` invite; see the gate
-   above). A pre-built copy for reference/A-B testing: `/tmp/tpgo` (rebuild: `git clone …/sinnet3000/teleport-client`).
-2. **Port stage ① invite pairing** — `tern-core`: redeem a `teleport.ui.link/<UUID>` invite against the broker
-   `cloudaccess.svc.ui.com/teleport` — POST connect, poll for `CONNECT_RESPONSE`, receive peer candidates; persist
-   the reusable session (keyring). *Ref: Go `api.go`, `session.go`.* (No SSO login needed on this path — the invite
-   is the capability.)
-3. **Port stage ② ICE/STUN nomination** — probe candidates, per-tuple nomination, select the endpoint (direct or
-   TURN-relayed via `-turn`). *Ref: Go `stun.go`, `nomination.go`; Rust `str0m` (or `pion`-equivalent).*
-4. **Port stage ③ userspace WireGuard + netstack** — WG over the nominated UDP tuple; expose a TUN (system-wide)
-   and/or SOCKS5 (no-admin). *Ref: Go `wireguard.go`, `tunnel.go`, `socks5.go`; Rust `boringtun` + `smoltcp`.*
-5. **Integrate** — wire the engine into `ternd` `Connect`/`Disconnect`, the GUI toggle + tray state; then drives
-   (`gvfs.rs`, SMB over the tunnel, creds from keyring). Much scaffolding already exists.
-6. **Invite-input UX** — how the user supplies the `teleport.ui.link` invite (paste in the GUI / `tern login
-   --invite <url>`). The console generates it in **Settings → VPN → Teleport**; it's **single-use** (save the
-   session, don't reuse the invite).
-7. **(Later) off-LAN validation** — run from a remote network to confirm the reflexive/TURN candidates nominate and
-   the relayed path works (the on-LAN test only exercised the direct candidate).
+**Decisions locked (owner, 2026-07-30):** **(a) pure Rust — no interim Go backend** (self-contained, single
+language, slower to first tunnel); **(b) system-wide TUN** mode (all apps reach the LAN transparently), which
+needs a **one-time privilege grant** (`setcap cap_net_admin` on the daemon, or `pkexec`) — a real revision of the
+"no root" stance (ADR-0002/0004) for the Teleport path. A SOCKS-only no-privilege mode may come later as an option.
+
+### Bazzite work queue (port from the Go reference: `sinnet3000/teleport-client`, MIT; re-clone for reference)
+1. **✅ Invite parse** — `teleport::Invite::parse` (paste a `teleport.ui.link` link / UUID → validated invite).
+2. **✅ Broker auth + transport** — `teleport::secret_to_token` (scrypt→sha512→b64url, known-answer tested),
+   `BrokerResponse`/`IceServer`/`ServerInfo` wire types, `Broker::request`/`poll` (wiremock-tested), and
+   `BrokerResponse::to_wireguard_config` (bridges a `CONNECT_RESPONSE` → the existing `WireguardConfig`).
+3. **⬜ Connect offer + candidate exchange** — build the `connect` POST body (our WG pubkey + gathered local ICE
+   candidates), send via `Broker`, poll for `CONNECT_RESPONSE` (server candidates + ICE/TURN config). *Ref: Go
+   `api.go` connect, `session.go`.*
+4. **⬜ ICE/STUN nomination** — gather host + STUN-reflexive candidates, per-tuple connectivity checks, select a
+   reachable peer tuple (direct or Cloudflare-TURN-relayed). *Ref: Go `stun.go`, `nomination.go`; crate: `str0m`
+   or a `stun`/`webrtc-rs` component.* Output: a bound UDP socket + the nominated peer address.
+5. **⬜ Userspace WireGuard over the ICE socket → TUN** — run `boringtun` with our key + the console's key, sending
+   WG packets on the ICE socket to the nominated peer; plumb decrypted packets to a **TUN device** (system-wide),
+   add routes for AllowedIPs (subnet-subtract to avoid collisions). *Ref: Go `wireguard.go`, `tunnel.go`; crates:
+   `boringtun` + `tun`(/`smoltcp` if a userspace stack is wanted).* Needs the `cap_net_admin` grant (decision b).
+6. **⬜ Integrate** — a `TeleportBackend` implementing `VpnBackend`; wire `ternd` `Connect`/`Disconnect`, the GUI +
+   tray state, and the invite-input UX (paste field / `tern connect --invite <url>`); persist the reusable session
+   in the keyring so the single-use invite isn't needed again. Then drives (`gvfs.rs`, SMB over the tunnel).
+7. **⬜ (Later) off-LAN validation** — run from a remote network to exercise the reflexive/TURN path (the live
+   validation so far was on-LAN, so only the direct candidate was tested).
 
 **Fallback (only if needed):** the console's built-in **WireGuard Server** → export `.conf` → `tern-linux/src/nm.rs`
 (NetworkManager). Now lower priority since the Teleport invite path is validated; keep as the direct-dial option.
