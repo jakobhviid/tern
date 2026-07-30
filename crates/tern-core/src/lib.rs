@@ -9,9 +9,12 @@
 //! - User-facing wording lives in [`error`] (see `docs/05-ux-and-error-handling-guidelines.md`): never
 //!   surface protocol/implementation detail to end users.
 
+pub mod backend;
+pub mod config;
 pub mod error;
 pub mod model;
 pub mod state;
+pub mod ucs;
 pub mod wg;
 
 pub use error::{Error, UserAction, UserFacing};
