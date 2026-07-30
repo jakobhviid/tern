@@ -6,15 +6,40 @@ investigation of the **actual** UniFi auth + VPN flow. This replaces the old pre
 Read first: [`AGENTS.md`](AGENTS.md) (rules), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`DECISIONS.md`](DECISIONS.md)
 (ADR-0001…0015), [`docs/02`](docs/02-vpn-protocol-and-reference-clients.md) (protocol).
 
-### 👉 If you're the agent picking this up (likely on the owner's Mac)
-The single thing that unblocks the whole product is a **traffic capture of the real macOS _UniFi Endpoint_ app**
-redeeming an invite. **Go straight to [⛔ THE blocker](#-the-blocker--the-one-task-that-unblocks-everything-capture-the-real-app)**,
-get the capture, paste it here (redacted), then follow [the implementation plan](#implementation-plan-once-we-have-the-capture).
-You are on the right machine for this: the Mac has the app, can run the capture, **and** can build + unit-test
-`tern-core`/`tern-cli` (no GTK/D-Bus needed — `cargo test -p tern-core`), so you can implement + test `ucs.rs`
-right there. GUI + NetworkManager runtime validation happens back on the Bazzite box (see the build note below).
-Everything already discovered — endpoints, deep-link format, why the other paths were rejected — is in this file
-so you don't have to re-derive it.
+## → Current decision & next step (end of Mac session, 2026-07-30)
+
+The capture is **done** (`docs/08`). The two decisions the owner made:
+
+**1. VPN direction — pragmatic, NOT full Teleport.** We are **not** building the userspace WireGuard + ICE/TURN
+stack (doc 08, option 1). For the owner's **own** console, use the simplest thing that works, chosen **by testing
+on Bazzite**:
+- **Option 2 — direct WireGuard to the console** if its One-Click / `id.ui.direct` / public-DDNS endpoint is
+  reachable and dialable → provision + hand to NetworkManager (ADR-0004).
+- **Option 3 — the console's built-in WireGuard Server** (Settings → VPN → WireGuard) → export `.conf` →
+  NetworkManager. Zero UID reverse-engineering; the reliable fallback. `tern-linux/src/nm.rs` already imports this.
+
+The captured UID control plane (doc 08: `Identity-Hub` JWT → `remote-credentials` → TURN) is **only needed for the
+full auto-provisioning flow** — parked unless option 2 turns out to need it.
+
+**2. Where to work next — HAND OFF TO THE LINUX HOST (Bazzite).** The Mac's unique value (the real app + the
+traffic capture) is spent. Everything remaining is Linux-runtime or real-account and **cannot be done or verified
+on the Mac**: the actual VPN connect, NetworkManager/GVfs/tray runtime, and probing the real API as a client.
+Continuing on the Mac would be speculative. Proceed on Bazzite.
+
+### Bazzite work queue (in order)
+1. **Pick the VPN option.** On the console, open Settings → VPN. If a reachable One-Click/WireGuard endpoint
+   exists, try option 2; otherwise create a **WireGuard Server** client and export its `.conf` (option 3).
+2. **`tern-linux/src/nm.rs`** — import that config (`nmcli connection import type wireguard …`), bring it up as a
+   **user-owned** connection, confirm password-free toggle (ADR-0004). This is the core of "it actually connects."
+3. **Wire it end-to-end** — daemon `Connect`/`Disconnect` → real NM; confirm `tern-gui` toggle + tray reflect the
+   real tunnel state (`nmcli connection show --active`).
+4. **Drives** — `tern-linux/src/gvfs.rs`: mount the UNAS SMB shares over the tunnel (creds from keyring); the
+   per-drive auto-mount UI already exists.
+5. **(Optional, only if you pursue auto-provisioning)** probe the `Identity-Hub` JWT mint per `docs/08` (log in via
+   `sso.ui.com` password+TOTP → `UBIC_AUTH`, then probe the credential/identity-hub endpoints as a client).
+
+_Mac cleanup done: mitmproxy + its CA removed, system proxy off, captured traffic (secrets) discarded — none of it
+ever entered the repo._
 
 ---
 
