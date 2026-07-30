@@ -331,4 +331,27 @@ mod tests {
         // Honest state, not a fake "connected".
         assert_eq!(engine.snapshot().await.access, Access::Unreachable);
     }
+
+    #[tokio::test]
+    async fn sign_in_failure_resets_to_signed_out() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/proxy/users/public/api/v2/identity/info"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let mut engine = engine_for(&server, Config::default());
+
+        let err = engine.sign_in("bad-token".into()).await.unwrap_err();
+        assert!(matches!(err, Error::SessionExpired));
+        // Must not get stuck in "Signing you in…".
+        assert!(matches!(engine.snapshot().await.auth, Auth::SignedOut));
+    }
+
+    #[tokio::test]
+    async fn restore_session_is_false_without_a_saved_token() {
+        let server = MockServer::start().await;
+        let mut engine = engine_for(&server, Config::default());
+        assert!(!engine.restore_session().await.unwrap());
+    }
 }
