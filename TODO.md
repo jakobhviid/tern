@@ -20,6 +20,13 @@ so you don't have to re-derive it.
 
 ## TL;DR
 
+- **UPDATE (capture done, 2026-07-30) → [`docs/08-live-capture-findings.md`](docs/08-live-capture-findings.md).**
+  The real control-plane API was captured (macOS app via mitmproxy). **Login + connect cert-pin** (can't MITM);
+  the API calls don't, so we got the post-auth chain (`Identity-Hub` device JWT → `user-token` →
+  `cloudaccess…/ids/remote-credentials` → AWS creds + **Cloudflare TURN** + **`directAccessDomain`**). Net: the
+  One-Click **data plane is ICE/TURN + userspace WireGuard, not a plain NetworkManager config** (revises
+  ADR-0004); the remaining unknown is how the device JWT is first minted — get it by **client-side probing**
+  (pinning doesn't apply to a real client). Full map + next steps in doc 08. The rest of this file is prior context.
 - The app now **builds, installs, and runs natively on Bazzite** — `ternd` + `tern` + `tern-gui` + tray, under a
   systemd `--user` unit, talking over D-Bus. A real **GUI-crash bug was found and fixed** (it had never been run
   daemon+GUI together before).
