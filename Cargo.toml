@@ -30,6 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 url = "2"
 base64 = "0.22"
 sha2 = "0.10"
+scrypt = { version = "0.11", default-features = false }
 zeroize = { version = "1", features = ["derive"] }
 directories = "5"
 # WireGuard key material (X25519) — permissive (BSD/MIT), no OpenSSL.
