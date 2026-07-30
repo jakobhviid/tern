@@ -2,10 +2,16 @@
 //! makes passkeys / WebAuthn, MFA, and enterprise SAML work: the OS + browser run the ceremony, and we only
 //! receive the resulting token via a `127.0.0.1` loopback redirect.
 //!
-//! Status: the *mechanism* here (PKCE, loopback capture, code→token exchange, browser launch) is complete and
-//! tested. The UniFi Identity authorize/token URLs + `client_id` in [`AuthConfig`] are **UNCONFIRMED** — the
-//! binary shows `/api/oauth/token` under `sso.ui.com`, but the authorize endpoint + client id must be pinned
-//! from a traffic capture (M7, docs/02). Everything else is ready.
+//! ⚠️ **This OAuth path is NOT the flow a consumer UniFi Identity account uses — see `TODO.md`.** The
+//! endpoints below are real (`sso.ui.com`'s OIDC discovery at `/oauth2/.well-known/openid-configuration`
+//! confirms a Django-OAuth-Toolkit server: `authorization_endpoint = /oauth2/authorize`,
+//! `token_endpoint = /oauth2/token`, PKCE `S256`, `scopes_supported = [read, billing, openid, introspection,
+//! ui]`), but that DOT server backs the **enterprise "SSO Apps"** feature and needs a registered `client_id`
+//! we don't have (it rejects any we try). The **real** onboarding for this account is an **invite →
+//! device-credential → UCS `vpn/session`** flow (`identity-standard://` deep link → `enterprise.svc.ui.com`);
+//! that's the target — implement it in [`crate::ucs`], not here. This module is kept because its **PKCE +
+//! loopback + code→token mechanism is generic and unit-tested**, and reusable if a real OAuth client ever
+//! appears. Do not wire `AuthConfig`/`run_login_flow` into the product path without confirming a valid client.
 
 use base64::Engine as _;
 use serde::Deserialize;
@@ -58,12 +64,16 @@ pub struct AuthConfig {
 
 impl Default for AuthConfig {
     fn default() -> Self {
-        // UNCONFIRMED placeholders — see module docs.
         Self {
-            authorize_url: "https://sso.ui.com/api/oauth/authorize".into(),
-            token_url: "https://sso.ui.com/api/oauth/token".into(),
+            // Confirmed from https://sso.ui.com/oauth2/.well-known/openid-configuration (see module docs).
+            authorize_url: "https://sso.ui.com/oauth2/authorize".into(),
+            token_url: "https://sso.ui.com/oauth2/token".into(),
+            // UNCONFIRMED: the desktop app's registered public client id (DOT validates it only post-login,
+            // so it can't be probed anonymously). Pin from the real UniFi Endpoint app / an M7 capture.
             client_id: "unifi-endpoint".into(),
-            scopes: "openid profile".into(),
+            // `openid` is valid; `profile` is NOT in scopes_supported. Widen (e.g. `openid ui`) once we know
+            // what the UCS API requires.
+            scopes: "openid".into(),
         }
     }
 }
