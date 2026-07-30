@@ -8,6 +8,7 @@
 //! backend; here we only own the interface address, the crypto, and the packet pump.
 
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,16 +54,43 @@ fn interface_addr(cfg: &WireguardConfig) -> Result<(IpAddr, u8)> {
         .ok_or_else(|| Error::InvalidConfig("the config has no tunnel address".into()))
 }
 
+/// Live counters for the tunnel, updated by the pump — enough to tell "handshake done + bytes flowing" from
+/// "stuck". The GUI/daemon can surface throughput from the same struct.
+#[derive(Default)]
+pub struct Stats {
+    /// Datagrams received on the ICE socket.
+    pub net_in: AtomicU64,
+    /// Of those, STUN messages (the console's nomination / consent keepalives).
+    pub net_in_stun: AtomicU64,
+    /// Datagrams sent to the peer (handshake, keepalive, transport).
+    pub net_out: AtomicU64,
+    /// Plaintext packets read from the TUN (outbound app traffic).
+    pub tun_in: AtomicU64,
+    /// Decrypted packets delivered to the TUN (inbound app traffic).
+    pub tun_out: AtomicU64,
+    /// Whether a WireGuard handshake has completed at least once.
+    pub handshake: AtomicBool,
+    /// boringtun's transport byte counters (encrypted payload).
+    pub tx_bytes: AtomicU64,
+    pub rx_bytes: AtomicU64,
+}
+
 /// A running Teleport tunnel: a background task pumping packets between the socket and the TUN device, plus
 /// the handle to stop it. Dropping the [`Tunnel`] without [`Tunnel::stop`] aborts the pump (and the OS tears
 /// the TUN device down).
 pub struct Tunnel {
     stop: Arc<Notify>,
     task: tokio::task::JoinHandle<()>,
+    /// Live throughput/handshake counters (shared with the pump).
+    pub stats: Arc<Stats>,
     /// The TUN interface name (e.g. `tern0`) — the backend routes traffic onto this.
     pub interface: String,
-    /// The tunnel address the console assigned us (source address for tunneled traffic).
+    /// The tunnel address the console assigned us (source address for tunneled traffic). The caller applies
+    /// it (`ip addr add`) and brings the link up — we deliberately don't configure addressing from inside the
+    /// library (it needs privilege that iproute2 already has, and keeps routing policy in one place).
     pub address: IpAddr,
+    /// The prefix length that goes with [`Tunnel::address`].
+    pub prefix: u8,
 }
 
 impl Tunnel {
@@ -88,21 +116,22 @@ impl Tunnel {
         let tunn = Tunn::new(static_private, peer_public, preshared, Some(keepalive), 0, None);
 
         let (address, prefix) = interface_addr(cfg)?;
-        let mut builder = DeviceBuilder::new().name(if_name).mtu(TUN_MTU);
-        builder = match address {
-            IpAddr::V4(v4) => builder.ipv4(v4, prefix, None),
-            IpAddr::V6(v6) => builder.ipv6(v6, prefix),
-        };
-        let device = builder
+        // Create the interface bare (just name + MTU). Addressing/up/routes are the caller's job via iproute2
+        // — we don't do the netlink address dance in-process (it's the privileged step that iproute2 already
+        // handles cleanly, and it keeps all routing policy in one place).
+        let device = DeviceBuilder::new()
+            .name(if_name)
+            .mtu(TUN_MTU)
             .build_async()
             .map_err(|e| match e.kind() {
                 std::io::ErrorKind::PermissionDenied => Error::PrivilegeRequired,
-                _ => Error::Other(e.into()),
+                _ => Error::Other(anyhow::anyhow!("teleport: could not create TUN {if_name}: {e}")),
             })?;
 
         let stop = Arc::new(Notify::new());
-        let task = tokio::spawn(pump(tunn, Arc::new(socket), Arc::new(device), endpoint, stop.clone()));
-        Ok(Tunnel { stop, task, interface: if_name.to_string(), address })
+        let stats = Arc::new(Stats::default());
+        let task = tokio::spawn(pump(tunn, Arc::new(socket), Arc::new(device), endpoint, stop.clone(), stats.clone()));
+        Ok(Tunnel { stop, task, stats, interface: if_name.to_string(), address, prefix })
     }
 
     /// Stop the tunnel: signal the pump to exit and wait for it (which drops the TUN device).
@@ -121,6 +150,7 @@ async fn pump(
     device: Arc<AsyncDevice>,
     endpoint: SocketAddr,
     stop: Arc<Notify>,
+    stats: Arc<Stats>,
 ) {
     let mut net_buf = [0u8; 1600]; // ciphertext in from the socket
     let mut tun_buf = [0u8; 1600]; // plaintext in from the TUN
@@ -128,6 +158,7 @@ async fn pump(
 
     // Kick the handshake off proactively so keepalives flow even before the first TUN packet.
     if let TunnResult::WriteToNetwork(p) = tunn.format_handshake_initiation(&mut out, false) {
+        stats.net_out.fetch_add(1, Ordering::Relaxed);
         let _ = socket.send_to(p, endpoint).await;
     }
 
@@ -140,15 +171,25 @@ async fn pump(
 
             _ = ticker.tick() => {
                 if let TunnResult::WriteToNetwork(p) = tunn.update_timers(&mut out) {
+                    stats.net_out.fetch_add(1, Ordering::Relaxed);
                     let _ = socket.send_to(p, endpoint).await;
                 }
+                // Snapshot boringtun's view: a completed handshake + byte counters.
+                let (handshake, tx, rx, _, _) = tunn.stats();
+                if handshake.is_some() {
+                    stats.handshake.store(true, Ordering::Relaxed);
+                }
+                stats.tx_bytes.store(tx as u64, Ordering::Relaxed);
+                stats.rx_bytes.store(rx as u64, Ordering::Relaxed);
             }
 
             recv = socket.recv_from(&mut net_buf) => {
                 let Ok((n, from)) = recv else { continue };
+                stats.net_in.fetch_add(1, Ordering::Relaxed);
                 // The console may still send authenticated STUN keepalives on this socket after nomination;
                 // those aren't WireGuard, so don't feed them to boringtun.
                 if stun::is_stun(&net_buf[..n]) {
+                    stats.net_in_stun.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
                 // decapsulate can ask us to write more to the network (queued handshake/keepalive); the
@@ -157,10 +198,12 @@ async fn pump(
                 loop {
                     match tunn.decapsulate(Some(from.ip()), datagram, &mut out) {
                         TunnResult::WriteToNetwork(p) => {
+                            stats.net_out.fetch_add(1, Ordering::Relaxed);
                             let _ = socket.send_to(p, endpoint).await;
                             datagram = &[];
                         }
                         TunnResult::WriteToTunnelV4(p, _) | TunnResult::WriteToTunnelV6(p, _) => {
+                            stats.tun_out.fetch_add(1, Ordering::Relaxed);
                             let _ = device.send(p).await;
                             break;
                         }
@@ -171,7 +214,9 @@ async fn pump(
 
             recv = device.recv(&mut tun_buf) => {
                 let Ok(n) = recv else { continue };
+                stats.tun_in.fetch_add(1, Ordering::Relaxed);
                 if let TunnResult::WriteToNetwork(p) = tunn.encapsulate(&tun_buf[..n], &mut out) {
+                    stats.net_out.fetch_add(1, Ordering::Relaxed);
                     let _ = socket.send_to(p, endpoint).await;
                 }
             }

@@ -412,6 +412,55 @@ pub fn new_stun_secret() -> String {
     random_b64(32)
 }
 
+/// How long to answer the console's nomination probes before giving up.
+const NOMINATION_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Pick a STUN server (`host:port`) from the ICE config, falling back to Cloudflare's public STUN.
+fn stun_server(ice: &[IceServer]) -> String {
+    ice.iter()
+        .flat_map(|s| &s.urls)
+        .find_map(|u| u.strip_prefix("stun:").map(|h| h.split('?').next().unwrap_or(h).to_string()))
+        .unwrap_or_else(|| "stun.cloudflare.com:3478".to_string())
+}
+
+/// Run one full Teleport connection attempt from a paired [`Session`] to a **running** [`dataplane::Tunnel`]:
+/// bind a fresh UDP socket, gather ICE candidates (host + reflexive), send the CONNECT offer, answer the
+/// console's nomination, then bring up `if_name` as a TUN device carrying userspace WireGuard. This is the
+/// single code path shared by the live probe and the daemon's Teleport backend; the reusable session comes
+/// from a prior [`Broker::pair`] (invite redeem), so no invite is consumed here. Needs `CAP_NET_ADMIN` for the
+/// TUN device.
+pub async fn establish(broker: &Broker, session: &Session, if_name: &str) -> Result<dataplane::Tunnel> {
+    let socket = tokio::net::UdpSocket::bind("0.0.0.0:0")
+        .await
+        .map_err(|e| Error::Other(anyhow::anyhow!("teleport: couldn't open a local socket: {e}")))?;
+    let port = socket.local_addr().map_err(|e| Error::Other(anyhow::anyhow!("teleport: {e}")))?.port();
+
+    let mut local = ice::local_candidates(port);
+    let iceconf = broker.fetch_ice(session).await?;
+    if let Some(reflex) = ice::reflexive_candidate(&socket, &stun_server(&iceconf)).await {
+        tracing::info!(reflex = %reflex.addr, "teleport: reflexive candidate");
+        local.push(reflex);
+    }
+
+    let kp = crate::wg::generate_keypair();
+    let stun_secret = new_stun_secret();
+    let resp = broker.connect(session, &kp.public, &stun_secret, if_name, &local, &iceconf).await?;
+    if resp.server_info.wg_pub_key.is_empty() || resp.server_info.tunnel_addr.is_empty() {
+        // The console accepted the request but returned no peer info — typically a still-active prior
+        // connection on this session. Surface it as "couldn't connect" rather than hang on nomination.
+        tracing::warn!("teleport: empty CONNECT_RESPONSE (a prior connection may still be active)");
+        return Err(Error::VpnUnreachable);
+    }
+    tracing::info!(tunnel = %resp.server_info.tunnel_addr, "teleport: connected; awaiting nomination");
+
+    let nominated = nomination::await_nomination(&socket, &stun_secret, NOMINATION_TIMEOUT)
+        .await
+        .ok_or(Error::VpnUnreachable)?;
+    tracing::info!(%nominated, "teleport: endpoint nominated; bringing up tunnel");
+    let wg_config = resp.to_wireguard_config(&kp, &nominated.to_string());
+    dataplane::Tunnel::start(socket, nominated, &wg_config, if_name).await
+}
+
 fn invalid(input: &str) -> Error {
     Error::InvalidInvite(input.to_string())
 }
