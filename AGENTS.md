@@ -53,5 +53,5 @@ a **Homebrew bottle** in the owner's tap — but **do not push to `jakobhviid/ho
 
 ## Naming (ADR-0010, owner may rename freely)
 
-Product codename **tern**; app-id / D-Bus / Flatpak id `dk.jakobhviid.Tern`. To rename, grep `tern` and
-`dk.jakobhviid.Tern`.
+Product codename **tern**; app-id / D-Bus / Flatpak id `phd.hviid.Tern` (Flathub-verifiable via the owner's
+personal `hviid.phd` domain). Repo: `github.com/jakobhviid/tern`. To rename, grep `tern` and `phd.hviid.Tern`.

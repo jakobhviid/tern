@@ -21,7 +21,7 @@ pub struct Config {
 
 /// Path to the config file (`<config-dir>/tern/config.toml`), if a home/config dir is resolvable.
 pub fn config_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("dk", "jakobhviid", "tern")
+    directories::ProjectDirs::from("phd", "hviid", "tern")
         .map(|d| d.config_dir().join("config.toml"))
 }
 

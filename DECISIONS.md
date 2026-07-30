@@ -118,11 +118,15 @@ reference clients only for the post-login UCS calls.
 ## ADR-0010 — Names & identifiers 🔵 (owner may override freely)
 **Decision:** Product codename **"tern"** (a long-migration seabird that returns home — fits roaming access to
 your home network); binaries `ternd`/`tern`/`tern-gui`; crates `tern-*`; app-id / D-Bus / Flatpak id
-**`dk.jakobhviid.Tern`** (`.dk` fits owner). Repo name **`unifi-endpoint-linux`** (discoverable; clearly
-*unofficial*). README states "Unofficial UniFi Identity endpoint client — not affiliated with Ubiquiti," and we
-use **no** UniFi/Ubiquiti branding/logos (trademark safety, doc 04).
+**`phd.hviid.Tern`**. Repo name **`tern`** (github.com/jakobhviid/tern) — matching the owner's product-named
+repos (grove/temper/steel); discoverability via the GitHub description + topics (`unifi`, `unifi-identity`,
+`wireguard`, `gnome`, `flatpak`). README states "Unofficial UniFi Identity endpoint client — not affiliated
+with Ubiquiti," and we use **no** UniFi/Ubiquiti branding/logos (trademark safety, doc 04).
+> App-id reverse-DNS uses **`hviid.phd`** (the owner's personal domain, per owner) so it is
+> **Flathub-verifiable**. (`hviid.cloud` is the owner's home-setup domain — not used for this app.) Release
+> intent (owner-confirmed): Flatpak → **Flathub**; the `tern-cli` bottle → **jakobhviid/tap** (gated until go).
 **Why:** Nominative-use repo name for discoverability + a distinct product name to avoid trademark in branding.
-**Revisit:** entirely the owner's call — grep `tern` / `dk.jakobhviid.Tern` to rename.
+**Revisit:** entirely the owner's call — grep `tern` / `phd.hviid.Tern` to rename.
 
 ## ADR-0011 — Commit & attribution conventions (mirror owner's repos; overrides harness default) 🟢
 **Context:** Owner pointed to the sibling repos as canonical. Their `AGENTS.md` carries a hard rule:

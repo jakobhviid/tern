@@ -7,8 +7,8 @@ version = "1.0.0"                 # baseline only — release CI derives the rea
 edition = "2021"
 license = "MIT"
 authors = ["Jakob Hviid, PhD <jakob@hviid.phd>"]
-homepage = "https://github.com/jakobhviid/unifi-endpoint-linux"
-repository = "https://github.com/jakobhviid/unifi-endpoint-linux"
+homepage = "https://github.com/jakobhviid/tern"
+repository = "https://github.com/jakobhviid/tern"
 rust-version = "1.82"
 
 # Shared dependency versions, pinned once for the whole workspace (see ADR-0003).
