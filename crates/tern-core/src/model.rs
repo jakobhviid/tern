@@ -100,6 +100,60 @@ impl WireguardConfig {
         }
         Some(s)
     }
+
+    /// Parse a standard WireGuard / `wg-quick` `.conf` — e.g. one exported by the console's built-in
+    /// **WireGuard Server** (the ADR-0004 fallback / "import a normal WireGuard config" path). Reads
+    /// `[Interface]` (PrivateKey/Address/DNS) and the first `[Peer]` (PublicKey/Endpoint/AllowedIPs/
+    /// PresharedKey/PersistentKeepalive). The interface private key is kept in `client_private_key`.
+    pub fn from_wg_quick(text: &str) -> crate::Result<Self> {
+        let mut section = "";
+        let (mut private, mut address, mut dns) = (None, Vec::new(), Vec::new());
+        let (mut pubkey, mut endpoint, mut allowed, mut psk, mut keepalive) =
+            (None, None, Vec::new(), None, None);
+        let csv = |v: &str| {
+            v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect::<Vec<_>>()
+        };
+        for raw in text.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with('[') {
+                section = if line.eq_ignore_ascii_case("[interface]") {
+                    "iface"
+                } else if line.eq_ignore_ascii_case("[peer]") {
+                    "peer"
+                } else {
+                    ""
+                };
+                continue;
+            }
+            let Some((k, v)) = line.split_once('=') else { continue };
+            let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
+            match (section, k.as_str()) {
+                ("iface", "privatekey") => private = Some(v.to_string()),
+                ("iface", "address") => address = csv(v),
+                ("iface", "dns") => dns = csv(v),
+                ("peer", "publickey") if pubkey.is_none() => pubkey = Some(v.to_string()),
+                ("peer", "endpoint") if endpoint.is_none() => endpoint = Some(v.to_string()),
+                ("peer", "allowedips") if allowed.is_empty() => allowed = csv(v),
+                ("peer", "presharedkey") if psk.is_none() => psk = Some(v.to_string()),
+                ("peer", "persistentkeepalive") if keepalive.is_none() => keepalive = v.parse().ok(),
+                _ => {}
+            }
+        }
+        let bad = |m: &str| crate::Error::InvalidConfig(m.to_string());
+        Ok(Self {
+            server_public_key: pubkey.ok_or_else(|| bad("no peer public key"))?,
+            endpoint: endpoint.ok_or_else(|| bad("no peer endpoint"))?,
+            allowed_ips: allowed,
+            preshared_key: psk,
+            persistent_keepalive: keepalive,
+            address,
+            dns,
+            client_private_key: Some(private.ok_or_else(|| bad("no interface private key"))?),
+        })
+    }
 }
 
 /// The response of provisioning a VPN session.
@@ -202,5 +256,42 @@ mod tests {
         assert!(conf.contains("Endpoint = 1.2.3.4:51820"));
         assert!(conf.contains("AllowedIPs = 10.0.0.0/8"));
         assert!(conf.contains("PersistentKeepalive = 25"));
+    }
+
+    #[test]
+    fn parses_a_wg_quick_conf_and_round_trips() {
+        let conf = "\
+# exported from the console
+[Interface]
+PrivateKey = aPRIVb64=
+Address = 192.168.2.7/32, fd00::2/128
+DNS = 192.168.1.1
+
+[Peer]
+PublicKey = SRVPUBb64=
+Endpoint = 128.76.158.114:51820
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+";
+        let cfg = WireguardConfig::from_wg_quick(conf).unwrap();
+        assert_eq!(cfg.server_public_key, "SRVPUBb64=");
+        assert_eq!(cfg.endpoint, "128.76.158.114:51820");
+        assert_eq!(cfg.address, ["192.168.2.7/32", "fd00::2/128"]);
+        assert_eq!(cfg.dns, ["192.168.1.1"]);
+        assert_eq!(cfg.allowed_ips, ["0.0.0.0/0", "::/0"]);
+        assert_eq!(cfg.persistent_keepalive, Some(25));
+        assert_eq!(cfg.client_private_key.as_deref(), Some("aPRIVb64="));
+        assert!(cfg.has_dialable_endpoint() && cfg.is_full_tunnel());
+        assert!(cfg.to_wg_quick().unwrap().contains("Endpoint = 128.76.158.114:51820"));
+    }
+
+    #[test]
+    fn rejects_conf_missing_required_fields() {
+        for bad in ["", "[Interface]\nPrivateKey = x\n", "[Peer]\nPublicKey = k\nEndpoint = 1.2.3.4:1\n"] {
+            assert!(
+                matches!(WireguardConfig::from_wg_quick(bad), Err(crate::Error::InvalidConfig(_))),
+                "should reject {bad:?}"
+            );
+        }
     }
 }

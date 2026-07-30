@@ -104,6 +104,9 @@ pub enum Error {
     /// A one-time permission is needed to bring up the system-wide connection (TUN device).
     #[error("privilege required to set up the connection")]
     PrivilegeRequired,
+    /// The imported file isn't a usable WireGuard configuration.
+    #[error("invalid wireguard config: {0}")]
+    InvalidConfig(String),
 
     // ---- VPN / access ----
     #[error("no console available for this account")]
@@ -186,6 +189,10 @@ impl Error {
             PrivilegeRequired => UserFacing::new(
                 "tern needs your permission to set up the connection.",
                 A::GrantPermission,
+            ),
+            InvalidConfig(_) => UserFacing::new(
+                "That file isn't a valid configuration. Choose the .conf file exported from your console.",
+                A::Retry,
             ),
             NoConsoleAvailable => UserFacing::new(
                 "Your network isn't available right now. Try again in a moment.",
@@ -275,6 +282,7 @@ mod tests {
             Error::InvalidInvite("https://teleport.ui.link/not-a-uuid".into()),
             Error::InviteAlreadyUsed,
             Error::PrivilegeRequired,
+            Error::InvalidConfig("missing peer".into()),
         ];
         // Whole words we must never leak into a user-facing title (docs/05 anti-patterns). Matched
         // per-token so a term like "ice" doesn't false-positive inside "service".

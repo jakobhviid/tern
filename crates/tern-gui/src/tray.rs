@@ -48,7 +48,7 @@ impl Tray for TernTray {
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let access_on = matches!(self.snapshot.access, Access::On | Access::TurningOn);
-        let toggle_label = if access_on { "Turn Access off" } else { "Turn Access on" };
+        let toggle_label = if access_on { "Disconnect" } else { "Connect" };
         vec![
             StandardItem {
                 label: "Open Tern".into(),
@@ -70,7 +70,7 @@ impl Tray for TernTray {
             }
             .into(),
             StandardItem {
-                label: "Sign out".into(),
+                label: "Forget this console".into(),
                 activate: Box::new(|t: &mut TernTray| {
                     let _ = t.cmd_tx.try_send(Cmd::SignOut);
                 }),

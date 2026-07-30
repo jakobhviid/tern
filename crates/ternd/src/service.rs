@@ -110,6 +110,17 @@ impl TernService {
         }
     }
 
+    /// Import a plain WireGuard `.conf` (the console's built-in WireGuard Server, or any peer) and bring it
+    /// up via the VPN backend — the ADR-0004 fallback, independent of Teleport/sign-in.
+    async fn import_wireguard(
+        &self,
+        conf: String,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> String {
+        let res = self.engine.lock().await.import_wireguard(conf).await;
+        self.finish(res, &emitter).await
+    }
+
     async fn sign_out(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) -> String {
         let res = self.engine.lock().await.sign_out().await;
         self.finish(res, &emitter).await

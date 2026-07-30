@@ -165,6 +165,21 @@ impl Engine {
         Ok(())
     }
 
+    /// Bring up a plain WireGuard `.conf` the user imported — the console's built-in WireGuard Server or any
+    /// WireGuard peer (ADR-0004 fallback). Independent of the Teleport/account flow: parse, hand to the VPN
+    /// backend, reflect the tunnel state. Does not change auth (no sign-in needed for a static config).
+    pub async fn import_wireguard(&mut self, conf: String) -> Result<()> {
+        let wg = crate::model::WireguardConfig::from_wg_quick(&conf)?;
+        self.access = Access::TurningOn;
+        self.vpn.connect(&wg).await?;
+        if !self.vpn.is_active().await? {
+            self.access = Access::Unreachable;
+            return Err(Error::VpnUnreachable);
+        }
+        self.access = Access::On;
+        Ok(())
+    }
+
     /// Mount every selected + reachable drive (idempotent; safe to re-run on network changes).
     pub async fn mount_selected(&self) {
         let host = self.active_host();

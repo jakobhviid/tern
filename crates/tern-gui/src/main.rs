@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use futures_util::StreamExt;
-use gtk::glib;
+use gtk::{gio, glib};
 use ksni::blocking::TrayMethods;
 use tern_core::ipc::{ActionResult, APP_ID};
 use tern_core::state::{Access, Auth, Snapshot};
@@ -20,6 +20,7 @@ use tray::TernTray;
 /// Commands from the UI/tray to the D-Bus actor.
 enum Cmd {
     RedeemInvite(String),
+    ImportWireguard(String),
     Connect(String),
     Disconnect,
     SignOut,
@@ -47,6 +48,7 @@ enum Update {
 trait Tern {
     async fn snapshot(&self) -> zbus::Result<String>;
     async fn redeem_invite(&self, url: &str) -> zbus::Result<String>;
+    async fn import_wireguard(&self, conf: &str) -> zbus::Result<String>;
     async fn connect(&self, console_id: &str) -> zbus::Result<String>;
     async fn disconnect(&self) -> zbus::Result<String>;
     async fn sign_out(&self) -> zbus::Result<String>;
@@ -146,6 +148,7 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
         let is_refresh = matches!(cmd, Cmd::Refresh);
         let result = match cmd {
             Cmd::RedeemInvite(url) => proxy.redeem_invite(&url).await,
+            Cmd::ImportWireguard(conf) => proxy.import_wireguard(&conf).await,
             Cmd::Connect(id) => proxy.connect(&id).await,
             Cmd::Disconnect => proxy.disconnect().await,
             Cmd::SignOut => proxy.sign_out().await,
@@ -219,6 +222,13 @@ fn build_ui(
     connect_btn.set_halign(gtk::Align::Center);
     connect_btn.set_sensitive(false);
     content.append(&connect_btn);
+
+    // Fallback (owner-requested): import a plain WireGuard `.conf` — e.g. the console's built-in WireGuard
+    // Server — for a working tunnel without the Teleport engine (ADR-0004).
+    let import_btn = gtk::Button::builder().label("Import a WireGuard config…").build();
+    import_btn.add_css_class("flat");
+    import_btn.set_halign(gtk::Align::Center);
+    content.append(&import_btn);
 
     let access_group = adw::PreferencesGroup::new();
     access_group.set_title("Access");
@@ -302,6 +312,24 @@ fn build_ui(
     }
     {
         let cmd_tx = cmd_tx.clone();
+        let window = window.clone();
+        import_btn.connect_clicked(move |_| {
+            let dialog = gtk::FileDialog::builder().title("Import WireGuard config").build();
+            let cmd_tx = cmd_tx.clone();
+            dialog.open(Some(&window), gio::Cancellable::NONE, move |res| {
+                if let Ok(Some(path)) = res.map(|f| f.path()) {
+                    match std::fs::read_to_string(&path) {
+                        Ok(text) => {
+                            let _ = cmd_tx.try_send(Cmd::ImportWireguard(text));
+                        }
+                        Err(e) => tracing::warn!(error = %e, "couldn't read the WireGuard config file"),
+                    }
+                }
+            });
+        });
+    }
+    {
+        let cmd_tx = cmd_tx.clone();
         signout.connect_clicked(move |_| {
             let _ = cmd_tx.try_send(Cmd::SignOut);
         });
@@ -323,6 +351,7 @@ fn build_ui(
                     for w in [
                         invite_group.upcast_ref::<gtk::Widget>(),
                         connect_btn.upcast_ref(),
+                        import_btn.upcast_ref(),
                         access_group.upcast_ref(),
                         drives_label.upcast_ref(),
                         drives_list.upcast_ref(),
@@ -339,13 +368,17 @@ fn build_ui(
                 Update::Snapshot(snap) => {
                     // Window is a state machine over `auth`: onboarding (paste an invite) until signed in,
                     // then the main view (Access + drives). See docs/09.
-                    let signed_in = matches!(snap.auth, Auth::SignedIn(_));
-                    invite_group.set_visible(!signed_in);
-                    connect_btn.set_visible(!signed_in);
-                    access_group.set_visible(signed_in);
-                    drives_label.set_visible(signed_in);
-                    drives_list.set_visible(signed_in);
-                    actions.set_visible(signed_in);
+                    // Show the main view when signed in OR when a tunnel is up (an imported WireGuard config
+                    // needs no sign-in); otherwise show the invite/import onboarding.
+                    let show_main =
+                        matches!(snap.auth, Auth::SignedIn(_)) || !matches!(snap.access, Access::Off);
+                    invite_group.set_visible(!show_main);
+                    connect_btn.set_visible(!show_main);
+                    import_btn.set_visible(!show_main);
+                    access_group.set_visible(show_main);
+                    drives_label.set_visible(show_main);
+                    drives_list.set_visible(show_main);
+                    actions.set_visible(show_main);
 
                     summary.set_text(&snap.summary_line());
                     access_switch.set_sensitive(true);
