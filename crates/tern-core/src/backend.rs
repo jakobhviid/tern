@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use crate::model::{Drive, Host, WireguardConfig};
+use crate::teleport::{Invite, Session};
 use crate::Result;
 
 /// Where a target can be reached from right now (drives the reachability-gated mount logic).
@@ -32,6 +33,23 @@ pub trait VpnBackend: Send + Sync {
     async fn resume(&self) -> Result<()>;
     async fn disconnect(&self) -> Result<()>;
     async fn is_active(&self) -> Result<bool>;
+}
+
+/// Brings the **Teleport** tunnel up/down (ADR-0016). Distinct from [`VpnBackend`], which takes a static
+/// WireGuard config: Teleport has no dialable endpoint, so its config is built live from the console —
+/// the flow is invite → session, then session → running tunnel. The Linux impl runs the userspace
+/// WireGuard/TUN data plane and configures the interface with iproute2 (needs `CAP_NET_ADMIN`).
+#[async_trait]
+pub trait TeleportVpn: Send + Sync {
+    /// Redeem a single-use invite into a reusable [`Session`] (broker pairing). No privilege needed; the
+    /// session is persisted so the invite is only needed once.
+    async fn redeem(&self, invite: &Invite) -> Result<Session>;
+    /// Bring the tunnel up from a paired session: CONNECT → answer nomination → TUN + userspace WireGuard +
+    /// routing. Replaces any tunnel already up.
+    async fn up(&self, session: &Session) -> Result<()>;
+    /// Tear the tunnel down (stop the pump, remove the interface + routes).
+    async fn down(&self) -> Result<()>;
+    async fn is_up(&self) -> Result<bool>;
 }
 
 /// Mounts/unmounts SMB drives. Linux impl uses GVfs by default, kernel `mount.cifs` opt-in (ADR-0005).
@@ -87,6 +105,29 @@ impl VpnBackend for StubBackend {
         Ok(())
     }
     async fn is_active(&self) -> Result<bool> {
+        Ok(self.vpn_active.load(Ordering::SeqCst))
+    }
+}
+
+#[async_trait]
+impl TeleportVpn for StubBackend {
+    async fn redeem(&self, invite: &Invite) -> Result<Session> {
+        // A deterministic fake session so orchestration tests don't touch the network.
+        Ok(Session {
+            token: format!("tok-{}", invite.id),
+            secret: "stub-secret".into(),
+            device_token: "stub-device".into(),
+        })
+    }
+    async fn up(&self, _session: &Session) -> Result<()> {
+        self.vpn_active.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+    async fn down(&self) -> Result<()> {
+        self.vpn_active.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+    async fn is_up(&self) -> Result<bool> {
         Ok(self.vpn_active.load(Ordering::SeqCst))
     }
 }

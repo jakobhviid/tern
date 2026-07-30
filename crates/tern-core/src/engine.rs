@@ -8,21 +8,25 @@
 
 use std::sync::Arc;
 
-use crate::backend::{MountBackend, Reach, Reachability, SecretStore, VpnBackend};
+use crate::backend::{MountBackend, Reach, Reachability, SecretStore, TeleportVpn, VpnBackend};
 use crate::config::Config;
 use crate::model::{Drive, Host};
 use crate::state::{Access, Auth, DriveMount, DriveStatus, Snapshot};
+use crate::teleport::Session;
 use crate::ucs::UcsClient;
 use crate::{wg, Error, Result};
 
 /// Keyring keys (values live in the OS keyring via [`SecretStore`], never in config/logs).
 const TOKEN_KEY: &str = "sso_token";
 const WG_PRIVATE_KEY: &str = "wg_private_key";
+/// The reusable Teleport session (JSON), persisted so a redeemed invite reconnects without re-pairing.
+const TELEPORT_SESSION_KEY: &str = "teleport_session";
 
 /// Owns session + orchestration state and drives the backends. Not `Clone`; the daemon wraps it in a lock.
 pub struct Engine {
     ucs: UcsClient,
     vpn: Arc<dyn VpnBackend>,
+    teleport: Arc<dyn TeleportVpn>,
     mounts: Arc<dyn MountBackend>,
     reach: Arc<dyn Reachability>,
     secrets: Arc<dyn SecretStore>,
@@ -35,12 +39,17 @@ pub struct Engine {
     /// The last imported plain-WireGuard `.conf` (ADR-0004 fallback), remembered so the Access toggle can
     /// re-up it after a disconnect without an account/sign-in.
     imported_conf: Option<String>,
+    /// The reusable Teleport session (ADR-0016), once an invite has been redeemed — the Access toggle brings
+    /// its tunnel up without needing the invite again. Persisted in the keyring across restarts.
+    teleport_session: Option<Session>,
 }
 
 impl Engine {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ucs: UcsClient,
         vpn: Arc<dyn VpnBackend>,
+        teleport: Arc<dyn TeleportVpn>,
         mounts: Arc<dyn MountBackend>,
         reach: Arc<dyn Reachability>,
         secrets: Arc<dyn SecretStore>,
@@ -49,6 +58,7 @@ impl Engine {
         Self {
             ucs,
             vpn,
+            teleport,
             mounts,
             reach,
             secrets,
@@ -59,6 +69,7 @@ impl Engine {
             drives: Vec::new(),
             active_console: None,
             imported_conf: None,
+            teleport_session: None,
         }
     }
 
@@ -126,6 +137,17 @@ impl Engine {
 
     /// Turn on Access: enroll our key, provision a VPN session, bring up the tunnel, and auto-mount drives.
     pub async fn connect(&mut self, console_id: &str) -> Result<()> {
+        // Teleport mode (ADR-0016): a redeemed session reconnects here without needing the invite again.
+        if let Some(session) = self.teleport_session.clone() {
+            self.access = Access::TurningOn;
+            self.teleport.up(&session).await?;
+            if !self.teleport.is_up().await? {
+                self.access = Access::Unreachable;
+                return Err(Error::VpnUnreachable);
+            }
+            self.access = Access::On;
+            return Ok(());
+        }
         // Imported-config mode (ADR-0004 fallback, no account): if the user imported a config this session,
         // the Access toggle reconnects it — resume the still-present profile if possible, else re-import.
         // (Gated on having an imported config so the account/UCS connect flow below is untouched.)
@@ -176,9 +198,65 @@ impl Engine {
         for d in &self.drives {
             let _ = self.mounts.unmount(d).await;
         }
-        self.vpn.disconnect().await?;
+        // Tear down whichever tunnel is up: the Teleport data plane if a session drove it, else the VPN
+        // backend (account or imported `.conf`).
+        if self.teleport_session.is_some() {
+            self.teleport.down().await?;
+        } else {
+            self.vpn.disconnect().await?;
+        }
         self.access = Access::Off;
         self.active_console = None;
+        Ok(())
+    }
+
+    /// Redeem a Teleport invite (ADR-0016): pair into a reusable session, persist it to the keyring, and
+    /// bring the tunnel up. The invite is single-use; afterwards the stored session reconnects via the Access
+    /// toggle without it. Independent of account sign-in.
+    pub async fn redeem_invite(&mut self, url: &str) -> Result<()> {
+        let invite = crate::teleport::Invite::parse(url)?;
+        self.access = Access::TurningOn;
+        let result = self.redeem_inner(&invite).await;
+        if result.is_err() {
+            self.access = Access::Off;
+        }
+        result
+    }
+
+    async fn redeem_inner(&mut self, invite: &crate::teleport::Invite) -> Result<()> {
+        let session = self.teleport.redeem(invite).await?;
+        let json = serde_json::to_string(&session)
+            .map_err(|e| Error::Other(anyhow::anyhow!("couldn't serialize the session: {e}")))?;
+        self.secrets.set(TELEPORT_SESSION_KEY, &json).await?;
+        self.teleport.up(&session).await?;
+        if !self.teleport.is_up().await? {
+            self.access = Access::Unreachable;
+            return Err(Error::VpnUnreachable);
+        }
+        self.teleport_session = Some(session);
+        self.access = Access::On;
+        Ok(())
+    }
+
+    /// Load a persisted Teleport session at startup, so a previously redeemed console can reconnect (via
+    /// [`Engine::connect`]) without the single-use invite. Returns whether one was found.
+    pub async fn restore_teleport_session(&mut self) -> Result<bool> {
+        if let Some(json) = self.secrets.get(TELEPORT_SESSION_KEY).await? {
+            if let Ok(session) = serde_json::from_str::<Session>(&json) {
+                self.teleport_session = Some(session);
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Forget the redeemed Teleport console: tear the tunnel down and drop the persisted session (a new
+    /// invite is then required to reconnect).
+    pub async fn forget_teleport(&mut self) -> Result<()> {
+        let _ = self.teleport.down().await;
+        self.secrets.delete(TELEPORT_SESSION_KEY).await?;
+        self.teleport_session = None;
+        self.access = Access::Off;
         Ok(())
     }
 
@@ -271,7 +349,7 @@ mod tests {
     fn engine_for(server: &MockServer, config: Config) -> Engine {
         let ucs = UcsClient::new(Endpoints { sso: "https://sso.ui.com".into(), api_gw: server.uri() });
         let stub = Arc::new(StubBackend::new());
-        Engine::new(ucs, stub.clone(), stub.clone(), stub.clone(), stub, config)
+        Engine::new(ucs, stub.clone(), stub.clone(), stub.clone(), stub.clone(), stub, config)
     }
 
     async fn happy_server() -> MockServer {
@@ -386,5 +464,53 @@ mod tests {
         let server = MockServer::start().await;
         let mut engine = engine_for(&server, Config::default());
         assert!(!engine.restore_session().await.unwrap());
+    }
+
+    const INVITE_UUID: &str = "08c9dc13-64bc-4525-9d9d-4659e6286f09";
+
+    #[tokio::test]
+    async fn redeeming_an_invite_pairs_persists_and_connects() {
+        let server = MockServer::start().await;
+        let mut engine = engine_for(&server, Config::default());
+
+        engine.redeem_invite(INVITE_UUID).await.unwrap();
+        assert_eq!(engine.snapshot().await.access, Access::On);
+        // The session is persisted (so a restart can reconnect without the invite).
+        assert!(engine.secrets.get(TELEPORT_SESSION_KEY).await.unwrap().is_some());
+
+        // Access toggle: disconnect then reconnect uses the stored session, no invite needed.
+        engine.disconnect().await.unwrap();
+        assert_eq!(engine.snapshot().await.access, Access::Off);
+        engine.connect("").await.unwrap();
+        assert_eq!(engine.snapshot().await.access, Access::On);
+    }
+
+    #[tokio::test]
+    async fn an_invalid_invite_is_rejected_and_resets_access() {
+        let server = MockServer::start().await;
+        let mut engine = engine_for(&server, Config::default());
+        let err = engine.redeem_invite("not-an-invite").await.unwrap_err();
+        assert!(matches!(err, Error::InvalidInvite(_)));
+        assert_eq!(engine.snapshot().await.access, Access::Off);
+    }
+
+    #[tokio::test]
+    async fn restoring_then_forgetting_a_teleport_session() {
+        let server = MockServer::start().await;
+        let mut engine = engine_for(&server, Config::default());
+        engine.redeem_invite(INVITE_UUID).await.unwrap();
+
+        // A fresh engine sharing the same keyring restores the session and can reconnect.
+        let mut restored = engine_for(&server, Config::default());
+        // Point it at the same secret store by reusing the persisted value.
+        let json = engine.secrets.get(TELEPORT_SESSION_KEY).await.unwrap().unwrap();
+        restored.secrets.set(TELEPORT_SESSION_KEY, &json).await.unwrap();
+        assert!(restored.restore_teleport_session().await.unwrap());
+        restored.connect("").await.unwrap();
+        assert_eq!(restored.snapshot().await.access, Access::On);
+
+        // Forget drops the persisted session; reconnect then needs a new invite.
+        engine.forget_teleport().await.unwrap();
+        assert!(engine.secrets.get(TELEPORT_SESSION_KEY).await.unwrap().is_none());
     }
 }

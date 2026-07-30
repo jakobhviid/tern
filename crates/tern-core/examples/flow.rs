@@ -28,7 +28,7 @@ async fn main() {
     let mut config = Config::default();
     config.set_auto_mount("d1", true); // the user ticked "Design" for auto-mount; left "Archive" off
 
-    let mut engine = Engine::new(ucs, stub.clone(), stub.clone(), stub.clone(), stub, config);
+    let mut engine = Engine::new(ucs, stub.clone(), stub.clone(), stub.clone(), stub.clone(), stub, config);
 
     println!("== tern flow demo (mock UCS + stub backend) ==\n");
     print_snapshot("start", &engine).await;
