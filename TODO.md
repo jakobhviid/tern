@@ -64,16 +64,22 @@ needs a **one-time privilege grant** (`setcap cap_net_admin` on the daemon, or `
    pubkey + `is_master:false` + local candidates + ice + `secret`), `POST /` with the session token, poll for
    `CONNECT_RESPONSE` (server `peer_desc.candidates` + `wg_pub_key` + tunnel addr). *Ref: Go `main.go`
    `runConnectionAttempt`/`fetchICEConfiguration`.*
-4. **⬜ ICE/STUN nomination (LIVE — not unit-testable)** — the console-driven master/slave nomination: it sends
-   authenticated STUN Binding requests carrying DATA `wait` values in the sequence `[2000,1000,500,250,125]`; we
-   only VALIDATE MESSAGE-INTEGRITY (HMAC-SHA1 keyed by `stunSecret`) and reply Binding Success (never send DATA —
-   sending it reverses the role and the console won't activate WireGuard). Track the wait sequence per remote
-   tuple → the completing tuple is the nominated endpoint. *Ref: Go `nomination.go` (771 lines), `stun.go`; Rust
-   STUN integrity via `hmac`+`sha1`.* **Fresh invite + iterative live testing against the console required.**
-5. **⬜ Userspace WireGuard over the ICE socket → TUN** — run `boringtun` with our key + the console's key, sending
-   WG packets on the ICE socket to the nominated peer; plumb decrypted packets to a **TUN device** (system-wide),
-   add routes for AllowedIPs (subnet-subtract to avoid collisions). *Ref: Go `wireguard.go`, `tunnel.go`; crates:
-   `boringtun` + `tun`(/`smoltcp` if a userspace stack is wanted).* Needs the `cap_net_admin` grant (decision b).
+4. **✅ ICE/STUN nomination (built; needs a live run)** — `teleport::stun` MESSAGE-INTEGRITY (HMAC-SHA1 keyed by
+   `stunSecret`) + `teleport::nomination::await_nomination`: an async loop on the ICE socket that validates the
+   console's authenticated Binding requests, replies Binding Success (never sends DATA — sending it reverses the
+   role and the console won't activate WireGuard), and tracks the DATA `wait` sequence `[2000,1000,500,250,125]`
+   per remote tuple → the completing tuple is the nominated endpoint. *Ref: Go `nomination.go`, `stun.go`.*
+   Unit-tested with a local driver socket; **still needs one live run against the console** via the probe below.
+5. **✅ Userspace WireGuard over the ICE socket → TUN (built; needs a live run)** — `teleport::dataplane::Tunnel`:
+   `boringtun` (BSD-3, our key + the console's key) drives the Noise handshake + transport crypto; a single-task
+   pump selects over the ICE socket (ciphertext) and a `tun-rs` TUN device (plaintext), forwarding both ways and
+   servicing boringtun's timers. STUN keepalives on the socket are filtered out. Chose `boringtun` **0.7** (shares
+   our existing permissive `ring`; 0.6 pins an rc x25519) + `tun-rs` (MIT/Apache — not the WTFPL `tun`);
+   BSD-2-Clause added to `deny.toml` for `ip_network*`. Route-setup (AllowedIPs, subnet-subtract) is left to the
+   backend. *Ref: Go `wireguard.go`, `tunnel.go`.* Needs the `cap_net_admin` grant (decision b).
+   **Live-test both stages:** `cargo build -p tern-core --example teleport_tunnel_probe` then
+   `sudo ./target/debug/examples/teleport_tunnel_probe <teleport.ui.link invite | saved-session.json>` — it pairs
+   (or reuses a session), connects, nominates, brings up `tern0`, routes the console's `/24`, and pings the gateway.
 6. **⬜ Integrate** — a `TeleportBackend` implementing `VpnBackend`; wire `ternd` `Connect`/`Disconnect`, the GUI +
    tray state, and the invite-input UX (paste field / `tern connect --invite <url>`); persist the reusable session
    in the keyring so the single-use invite isn't needed again. Then drives (`gvfs.rs`, SMB over the tunnel).

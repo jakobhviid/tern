@@ -262,6 +262,17 @@ the **entry point is a Teleport invite** (broker `cloudaccess.svc.ui.com/telepor
 Go stack (`wireguard-go`+`pion/stun`+`gvisor`, all permissive) confirms the Rust crate choices. The newer
 Identity-Hub/`remote-credentials` chain (doc 08) is **parked** — unneeded. *Caveat:* validated on-LAN (direct ICE
 candidate); off-LAN reflexive/TURN nomination is the same code path but not yet exercised.
+**Implementation notes (2026-07-31, stages ④–⑤ built):** nomination is `teleport::nomination::await_nomination`
+(async loop on the ICE socket: validate the console's MESSAGE-INTEGRITY Binding requests, reply Binding Success,
+track the `wait` sequence → nominated tuple). The data plane is `teleport::dataplane::Tunnel` — a single-task
+pump over `boringtun` **0.7** + a `tun-rs` TUN device. Crate choices, made against `deny.toml`: **boringtun 0.7**
+not 0.6 (0.6 hard-pins an rc `x25519-dalek`; 0.7 uses `ring`, which our rustls stack **already** pulls, and whose
+`Apache-2.0 AND ISC` is already allowed — so no new OpenSSL/BoringSSL exposure beyond what TLS already links);
+**`tun-rs`** (MIT/Apache) not the `tun` crate (WTFPL, not on the allow-list). `BSD-2-Clause` added to the allow-list
+for `ip_network`/`ip_network_table` (pulled by boringtun) — same permissive family as the already-allowed BSD-1/3.
+Both stages are unit-tested for their pure parts and exercised end-to-end by `examples/teleport_tunnel_probe`
+(needs `cap_net_admin`); a live console run is the remaining confirmation. Routing (AllowedIPs) stays in the
+backend, not the data-plane module.
 **Revisit if:** Ubiquiti fully retires the Teleport/MQTT signaling for consumer accounts (then only the doc-08
 chain remains — port data plane, RE the control plane), or a directly-dialable path (ADR-0004 fallback) turns out
 to cover the owner's real need (then this large port may be unnecessary for *this* user).

@@ -39,6 +39,10 @@ directories = "5"
 # WireGuard key material (X25519) — permissive (BSD/MIT), no OpenSSL.
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+# Userspace WireGuard data plane (Teleport): boringtun (BSD-3) drives the Noise handshake + transport crypto;
+# tun-rs (MIT/Apache) provides the TUN device. Permissive only — no OpenSSL, no GPL (ADR-0016, docs/04).
+boringtun = "0.7"
+tun-rs = { version = "2", features = ["async_tokio"] }
 # Dev / test
 wiremock = "0.6"
 
