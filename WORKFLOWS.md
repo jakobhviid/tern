@@ -31,6 +31,30 @@ tern-gui                                      # window + top-bar tray
 ```
 Full detail + first-run + auth capture: `docs/07-bazzite-bringup.md`.
 
+## Connect via Teleport (the real consumer-account path, ADR-0016)
+
+Generate an invite in the console (Settings → VPN → Teleport) — `https://teleport.ui.link/<uuid>` — then:
+
+```sh
+sudo setcap cap_net_admin+ep ~/.local/bin/ternd   # once; the in-process TUN needs it (install-local.sh does this)
+systemctl --user restart tern.service
+tern redeem https://teleport.ui.link/<uuid>       # pairs, persists the session, brings the tunnel up
+tern status                                        # Access: On
+tern disconnect      # later re-connect with `tern connect` — the saved session needs no new invite
+```
+
+The invite is **single-use**; the reusable session is stored in the keyring, so the Access toggle (CLI/GUI/tray)
+reconnects without it. **Bench the data plane directly** (no daemon) with the live probe — it prints the
+handshake/echo/byte stats and self-terminates:
+
+```sh
+cargo build -p tern-core --example teleport_tunnel_probe
+sudo ./target/debug/examples/teleport_tunnel_probe <teleport.ui.link invite | saved-session.json>
+```
+
+Still open (want a live run to settle): full-tunnel/LAN **routing** and **DNS** (only the connected subnet is
+added today), and SMB **drives** over the tunnel. See `TODO.md` stage ⑥–⑦.
+
 ## Commits & releases
 
 - **Conventional Commits**, lowercase, imperative; `feat`/`fix`/`docs`/`chore`/`refactor`/`test`/`ci`/`perf`,
