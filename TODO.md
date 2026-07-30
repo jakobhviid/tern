@@ -48,12 +48,19 @@ needs a **one-time privilege grant** (`setcap cap_net_admin` on the daemon, or `
 2. **✅ Broker auth + transport** — `teleport::secret_to_token` (scrypt→sha512→b64url, known-answer tested),
    `BrokerResponse`/`IceServer`/`ServerInfo` wire types, `Broker::request`/`poll` (wiremock-tested), and
    `BrokerResponse::to_wireguard_config` (bridges a `CONNECT_RESPONSE` → the existing `WireguardConfig`).
-3. **⬜ Connect offer + candidate exchange** — build the `connect` POST body (our WG pubkey + gathered local ICE
-   candidates), send via `Broker`, poll for `CONNECT_RESPONSE` (server candidates + ICE/TURN config). *Ref: Go
-   `api.go` connect, `session.go`.*
-4. **⬜ ICE/STUN nomination** — gather host + STUN-reflexive candidates, per-tuple connectivity checks, select a
-   reachable peer tuple (direct or Cloudflare-TURN-relayed). *Ref: Go `stun.go`, `nomination.go`; crate: `str0m`
-   or a `stun`/`webrtc-rs` component.* Output: a bound UDP socket + the nominated peer address.
+   - **✅ Candidate model + ranking (stage ④ core)** — `Candidate`/`PeerDesc` types, `rank_candidates` (host <
+     reflex < turn, IPv6 pref), the console's `peer_desc` parsed from `CONNECT_RESPONSE`. Unit-tested.
+   - **✅ Live-validated** — `examples/teleport_probe.rs` hit the real broker `/metadata` with our derived token
+     → HTTP 200 + the console's info. Proves stages ①–② against reality.
+3. **⬜ Connect offer + candidate exchange** — build the `connect` POST body (our WG pubkey + our gathered local
+   candidates + `is_master:false`), send via `Broker`, poll for `CONNECT_RESPONSE`. Local candidate gathering
+   needs a bound UDP socket + interface enumeration + STUN reflexive lookup. *Ref: Go `api.go`, `nomination.go`
+   `localCandidates`, `stun.go` reflexive.*
+4. **⬜ ICE/STUN nomination (LIVE — not unit-testable)** — the custom master/slave nomination: per-tuple STUN
+   Binding probes carrying a session-secret hash + MESSAGE-INTEGRITY, `waitForNomination` wait-sequence, pick the
+   reachable tuple (direct or Cloudflare-TURN). *Ref: Go `nomination.go` (771 lines), `stun.go`; Rust needs a STUN
+   crate (e.g. `stun`/`stun_codec`).* Output: a bound UDP socket + the nominated peer address. **This is where a
+   fresh invite + iterative testing against the console is required.**
 5. **⬜ Userspace WireGuard over the ICE socket → TUN** — run `boringtun` with our key + the console's key, sending
    WG packets on the ICE socket to the nominated peer; plumb decrypted packets to a **TUN device** (system-wide),
    add routes for AllowedIPs (subnet-subtract to avoid collisions). *Ref: Go `wireguard.go`, `tunnel.go`; crates:
