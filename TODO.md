@@ -87,9 +87,18 @@ needs a **one-time privilege grant** (`setcap cap_net_admin` on the daemon, or `
    down + forget, `restore_teleport_session` on startup. Wired through `ternd` (`redeem_invite` D-Bus method +
    startup restore), the CLI (`tern redeem`/`tern import`), and the GUI (invite paste → `RedeemInvite`; tray
    connect/disconnect; console web-UI link). Packaging grants `CAP_NET_ADMIN` via `setcap` (systemd --user can't).
-   **Still open:** routing (only the connected subnet is added — AllowedIPs/full-tunnel + subnet-subtract), DNS
-   (`dns_addrs` not applied to the interface), and the drives path (`gvfs.rs`, SMB over the tunnel). These want the
-   live data-plane confirmation first (the `teleport_tunnel_probe` sudo run).
+   **Still open:** routing, DNS, and the drives path (`gvfs.rs`, SMB over the tunnel). These want the live
+   data-plane confirmation first (the `teleport_tunnel_probe` sudo run) — the backend stays **address-only** until
+   then, because a wrong `0.0.0.0/0 dev tern0` would black-hole the host's network, and that must be added under
+   supervision, not on an unattended machine.
+   **Inferred routing plan** (from docs/02: *full-tunnel by default, client receives routes, the console/gateway
+   SNATs* — confirm against the probe's `client_ip`/`dns`/`udp_echo` output): the console assigns a v6 ULA overlay
+   (`fd37::x/120`) **and** a v4 `client_ip`; assign *both* to `tern0`, then for full-tunnel add `0.0.0.0/0` +
+   `::/0` via `tern0` using the wg-quick trick — a host route to the **nominated endpoint** via the real gateway
+   first (so the WireGuard underlay doesn't loop through the tunnel), then split the default into `0.0.0.0/1` +
+   `128.0.0.0/1` (or an fwmark + `suppress_prefixlength` rule). Split-tunnel (LAN-only) is the safer first target:
+   route just the console's LAN subnet(s). DNS = `resolvectl dns tern0 <dns_addrs>` + `domain tern0 ~.` once routes
+   carry the DNS server. All of this belongs in `tern-linux::teleport` `up()` (iproute2), gated on the live model.
 7. **⬜ (Later) off-LAN validation** — run from a remote network to exercise the reflexive/TURN path (the live
    validation so far was on-LAN, so only the direct candidate was tested).
 
