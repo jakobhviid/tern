@@ -10,10 +10,11 @@
 //! invite; later stages add broker pairing (`cloudaccess.svc.ui.com/teleport`), ICE/STUN nomination, and the
 //! userspace-WireGuard data plane. Permissive crates only (ADR-0007): `boringtun`/`str0m`/`smoltcp`.
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use base64::Engine as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 
 use crate::model::WireguardConfig;
@@ -130,7 +131,7 @@ impl BrokerResponse {
 }
 
 /// A STUN/TURN server from the broker's `ice_configuration`.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IceServer {
     #[serde(default)]
     pub urls: Vec<String>,
@@ -140,9 +141,41 @@ pub struct IceServer {
     pub credential: String,
 }
 
-/// The console side of the tunnel: its WireGuard public key + the tunnel address it assigns us.
+/// An ICE candidate: an address to try reaching the peer at (or that the peer can reach us at).
+/// `kind` is `"iface"` (a local/host address), `"reflex"` (a STUN-observed public address), or `"turn"`
+/// (a relay). `addr` is `host:port`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Candidate {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub addr: String,
+}
+
+impl Candidate {
+    /// Whether `addr` is an IPv6 socket address.
+    pub fn is_ipv6(&self) -> bool {
+        self.addr.parse::<SocketAddr>().map(|s| s.is_ipv6()).unwrap_or(false)
+    }
+}
+
+/// A peer descriptor exchanged during pairing: a side's candidates, its optional ICE config, and whether
+/// it is the nomination master (the console is master; we are the slave).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PeerDesc {
+    #[serde(default)]
+    pub candidates: Vec<Candidate>,
+    #[serde(rename = "ice_config", default, skip_serializing_if = "Vec::is_empty")]
+    pub ice_config: Vec<IceServer>,
+    #[serde(rename = "is_master", default)]
+    pub is_master: bool,
+}
+
+/// The console side of the tunnel: its WireGuard public key, the tunnel address it assigns us, and its
+/// candidate set (`peer_desc`).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ServerInfo {
+    #[serde(rename = "peer_desc", default)]
+    pub peer_desc: PeerDesc,
     #[serde(rename = "wg_pub_key", default)]
     pub wg_pub_key: String,
     #[serde(rename = "udp_echo_port", default)]
@@ -153,6 +186,29 @@ pub struct ServerInfo {
     pub tunnel_mask: u8,
     #[serde(rename = "tunnel_addr", default)]
     pub tunnel_addr: String,
+}
+
+/// Order candidates the way the reference client tries them: host (`iface`) before STUN-reflexive before
+/// TURN before anything else, with a slight IPv6 preference. Ports `rankCandidates`. Stable, so ties keep
+/// the broker's order.
+pub fn rank_candidates(candidates: &[Candidate]) -> Vec<Candidate> {
+    let mut out = candidates.to_vec();
+    out.sort_by_key(candidate_score);
+    out
+}
+
+fn candidate_score(c: &Candidate) -> i32 {
+    let base = match c.kind.as_str() {
+        "iface" => 0,
+        "reflex" => 10,
+        "turn" => 20,
+        _ => 100,
+    };
+    if c.is_ipv6() {
+        base - 2
+    } else {
+        base
+    }
 }
 
 /// Client for the Teleport signaling broker ([`BROKER_BASE`]). Ports the reference client's transport:
@@ -391,5 +447,45 @@ mod tests {
         assert!(conf.contains("Address = 192.168.2.7/32"));
         assert!(conf.contains("PersistentKeepalive = 25"));
         assert!(conf.contains(&format!("PrivateKey = {}", kp.private)));
+    }
+
+    fn cand(kind: &str, addr: &str) -> Candidate {
+        Candidate { kind: kind.into(), addr: addr.into() }
+    }
+
+    #[test]
+    fn ranks_candidates_host_then_reflex_then_turn() {
+        let input = [
+            cand("turn", "1.1.1.1:1"),
+            cand("reflex", "2.2.2.2:2"),
+            cand("iface", "192.168.1.1:3"),
+            cand("weird", "3.3.3.3:4"),
+        ];
+        let ranked = rank_candidates(&input);
+        let kinds: Vec<&str> = ranked.iter().map(|c| c.kind.as_str()).collect();
+        assert_eq!(kinds, ["iface", "reflex", "turn", "weird"]);
+    }
+
+    #[test]
+    fn ipv6_is_detected_and_slightly_preferred_within_a_type() {
+        assert!(cand("iface", "[fd00::1]:5").is_ipv6());
+        assert!(!cand("iface", "192.168.1.1:5").is_ipv6());
+        let ranked = rank_candidates(&[cand("iface", "192.168.1.1:5"), cand("iface", "[fd00::1]:5")]);
+        assert_eq!(ranked[0].addr, "[fd00::1]:5");
+    }
+
+    #[test]
+    fn parses_the_server_peer_desc_candidates() {
+        let json = serde_json::json!({
+            "response_type": "CONNECT_RESPONSE",
+            "server_info": { "wg_pub_key": "K", "peer_desc": { "is_master": true, "candidates": [
+                {"type": "iface", "addr": "192.168.60.1:54313"},
+                {"type": "reflex", "addr": "128.76.158.114:54313"}
+            ]}}
+        });
+        let r: BrokerResponse = serde_json::from_value(json).unwrap();
+        assert!(r.server_info.peer_desc.is_master);
+        assert_eq!(r.server_info.peer_desc.candidates.len(), 2);
+        assert_eq!(r.server_info.peer_desc.candidates[0].addr, "192.168.60.1:54313");
     }
 }
