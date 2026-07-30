@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Tern
+GenericName=UniFi Identity Client
+Comment=One-Click VPN and network drives for UniFi Identity
+Exec=tern-gui %u
+Icon=phd.hviid.Tern
+Terminal=false
+Categories=Network;GTK;
+Keywords=UniFi;VPN;WireGuard;Drive;SMB;Identity;Teleport;
+StartupNotify=true
+StartupWMClass=phd.hviid.Tern
+MimeType=x-scheme-handler/identity-standard;
+X-GNOME-UsesNotifications=true

@@ -1,0 +1,59 @@
+# Flatpak manifest for Tern (target: Flathub). SCAFFOLD — finish + test on Linux (see DECISIONS ADR-0013/0014).
+#
+# Before this builds/works:
+#   1. Generate offline cargo sources on the Linux box and reference them (Flathub forbids network at build):
+#        python3 flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+#      then add `- cargo-sources.json` to the module `sources:` and keep `--offline` in the build.
+#   2. Port the VPN backend from `nmcli` to D-Bus/NetworkManager (ADR-0014) — `nmcli` isn't in the sandbox.
+#   3. Confirm the GNOME runtime version available on Flathub / Bazzite and pin it below.
+#   4. Decide how `ternd` starts in-sandbox (D-Bus activation file below, or GUI spawns it).
+id: phd.hviid.Tern
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: tern-gui
+
+finish-args:
+  - --share=network                                   # UCS API + SSO loopback callback
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --talk-name=org.freedesktop.secrets               # keyring (Secret Service)
+  - --system-talk-name=org.freedesktop.NetworkManager # One-Click VPN (delegated; ADR-0004/0014)
+  - --talk-name=org.gtk.vfs.*                          # SMB via GVfs
+  - --filesystem=xdg-run/gvfs
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/tern/cargo
+
+modules:
+  - name: tern
+    buildsystem: simple
+    build-commands:
+      # Use `--offline` once cargo-sources.json is generated (see header).
+      - cargo build --release --bin tern-gui --bin ternd --bin tern
+      - install -Dm755 target/release/tern-gui /app/bin/tern-gui
+      - install -Dm755 target/release/ternd    /app/bin/ternd
+      - install -Dm755 target/release/tern     /app/bin/tern
+      - install -Dm644 packaging/phd.hviid.Tern.desktop
+          /app/share/applications/phd.hviid.Tern.desktop
+      - install -Dm644 packaging/phd.hviid.Tern.metainfo.xml
+          /app/share/metainfo/phd.hviid.Tern.metainfo.xml
+      - install -Dm644 data/icons/hicolor/scalable/apps/phd.hviid.Tern.svg
+          /app/share/icons/hicolor/scalable/apps/phd.hviid.Tern.svg
+      # D-Bus activation so connecting to the service starts ternd inside the sandbox.
+      - |
+        install -d /app/share/dbus-1/services
+        cat > /app/share/dbus-1/services/phd.hviid.Tern.service <<'EOF'
+        [D-BUS Service]
+        Name=phd.hviid.Tern
+        Exec=/app/bin/ternd
+        EOF
+    sources:
+      - type: dir
+        path: ../..
+      # - cargo-sources.json   # add after generating (see header)

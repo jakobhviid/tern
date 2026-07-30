@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>phd.hviid.Tern</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Tern</name>
+  <summary>One-Click VPN and network drives for UniFi Identity</summary>
+  <description>
+    <p>
+      Tern is an unofficial, GNOME-native client for UniFi Identity ("UniFi Endpoint"). Sign in with your
+      organization using your browser (passkeys and single sign-on supported), turn on the One-Click VPN, and
+      auto-mount your UniFi Drive shares — whether you're on the local network or connected remotely over the VPN.
+    </p>
+    <p>Not affiliated with, or endorsed by, Ubiquiti Inc.</p>
+  </description>
+  <launchable type="desktop-id">phd.hviid.Tern.desktop</launchable>
+  <categories>
+    <category>Network</category>
+  </categories>
+  <url type="homepage">https://github.com/jakobhviid/tern</url>
+  <url type="bugtracker">https://github.com/jakobhviid/tern/issues</url>
+  <url type="vcs-browser">https://github.com/jakobhviid/tern</url>
+  <developer id="phd.hviid">
+    <name>Jakob Hviid</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0.0" date="2026-07-30"/>
+  </releases>
+</component>
