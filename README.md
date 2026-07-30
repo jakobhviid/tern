@@ -54,7 +54,22 @@ Distribution targets: **Flatpak** (primary, if feasible) + native `.deb`/`.rpm`/
 
 ## Status
 
-Research/design phase. Baseline fingerprint captured for **v4.1.1 (build 177)** on 2026-07-30. No code yet.
+Early build. Research complete (see `docs/`); the platform-agnostic **`tern-core`** crate is implemented and
+tested — auth/UCS client, WireGuard keygen, the state machine, backend traits, and the orchestration
+**engine** — with the whole flow driven end-to-end on any platform via a mock server + in-memory stub. Linux
+system integration (NetworkManager, GVfs), the GUI/tray, and packaging are next (see
+[`docs/06-build-plan.md`](docs/06-build-plan.md)). Baseline macOS-app fingerprint captured for **v4.1.1
+(build 177)** on 2026-07-30.
+
+```sh
+cargo test -p tern-core                 # 23 tests, incl. HTTP round-trips + full engine flow
+cargo run -p tern-core --example flow   # watch sign-in → connect → selective auto-mount execute
+```
+
+## AI disclosure
+
+Parts of this codebase and its research were written with the assistance of AI coding agents (Claude Code and
+others). All changes are reviewed by the maintainer.
 
 ## Note on legality
 
