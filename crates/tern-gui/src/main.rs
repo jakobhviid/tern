@@ -26,6 +26,8 @@ enum Cmd {
     SignOut,
     SetAutoMount(String, bool),
     Refresh,
+    /// Disconnect the tunnel, then quit the app (a full exit shouldn't leave an orphan tunnel).
+    Quit,
 }
 
 /// Updates from the actor/tray to the GTK main loop.
@@ -145,6 +147,12 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
     }
 
     while let Ok(cmd) = cmd_rx.recv().await {
+        if matches!(cmd, Cmd::Quit) {
+            // A full quit disconnects the tunnel first, so exiting never leaves an invisible orphan tunnel.
+            let _ = proxy.disconnect().await;
+            let _ = update_tx.send(Update::Quit).await;
+            break;
+        }
         let is_refresh = matches!(cmd, Cmd::Refresh);
         let result = match cmd {
             Cmd::RedeemInvite(url) => proxy.redeem_invite(&url).await,
@@ -154,6 +162,7 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
             Cmd::SignOut => proxy.sign_out().await,
             Cmd::SetAutoMount(id, on) => proxy.set_auto_mount(&id, on).await,
             Cmd::Refresh => proxy.snapshot().await,
+            Cmd::Quit => unreachable!("Quit is handled before this match"),
         };
         // Surface an action failure to the user as a toast (Refresh returns a snapshot, not a result).
         if !is_refresh {
@@ -274,6 +283,21 @@ fn build_ui(
             None
         }
     };
+
+    // Close-to-tray: the X hides the window and keeps tern (and its tray icon) running in the background —
+    // it's a background agent, not a one-shot window. Quit only via the tray's "Quit". If there's no tray to
+    // return from, fall back to quitting so the user isn't left with an invisible running app.
+    {
+        let has_tray = tray_handle.is_some();
+        window.connect_close_request(move |w| {
+            if has_tray {
+                w.set_visible(false);
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+    }
 
     // Guard so programmatic switch updates don't echo back as user commands.
     let updating = Rc::new(Cell::new(false));

@@ -32,6 +32,9 @@ pub struct Engine {
     hosts: Vec<Host>,
     drives: Vec<Drive>,
     active_console: Option<String>,
+    /// The last imported plain-WireGuard `.conf` (ADR-0004 fallback), remembered so the Access toggle can
+    /// re-up it after a disconnect without an account/sign-in.
+    imported_conf: Option<String>,
 }
 
 impl Engine {
@@ -55,6 +58,7 @@ impl Engine {
             hosts: Vec::new(),
             drives: Vec::new(),
             active_console: None,
+            imported_conf: None,
         }
     }
 
@@ -122,6 +126,13 @@ impl Engine {
 
     /// Turn on Access: enroll our key, provision a VPN session, bring up the tunnel, and auto-mount drives.
     pub async fn connect(&mut self, console_id: &str) -> Result<()> {
+        // Imported-config mode (ADR-0004 fallback, no account): re-up the remembered WireGuard config rather
+        // than running the UCS/Teleport flow, so the Access toggle reconnects it after a disconnect.
+        if !matches!(self.auth, Auth::SignedIn(_)) {
+            if let Some(conf) = self.imported_conf.clone() {
+                return self.import_wireguard(conf).await;
+            }
+        }
         // Empty id → default to the first available console (single-site convenience for the switch/tray).
         let console_id = if console_id.is_empty() {
             self.hosts
@@ -177,6 +188,7 @@ impl Engine {
             return Err(Error::VpnUnreachable);
         }
         self.access = Access::On;
+        self.imported_conf = Some(conf);
         Ok(())
     }
 

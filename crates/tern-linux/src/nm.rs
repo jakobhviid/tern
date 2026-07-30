@@ -72,9 +72,10 @@ impl VpnBackend for NmVpn {
     }
 
     async fn disconnect(&self) -> Result<()> {
+        // Bring the tunnel down but KEEP the profile — deleting it would destroy an imported WireGuard
+        // config the user wants to reuse. The per-session UCS/Teleport path already deletes any stale
+        // profile before re-importing on the next connect, so nothing lingers there either.
         let _ = cmd::status_ok("nmcli", &["connection", "down", CONNECTION]).await;
-        // Delete the profile so the per-session key doesn't linger.
-        let _ = cmd::status_ok("nmcli", &["connection", "delete", CONNECTION]).await;
         Ok(())
     }
 

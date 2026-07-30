@@ -81,7 +81,8 @@ impl Tray for TernTray {
             StandardItem {
                 label: "Quit".into(),
                 activate: Box::new(|t: &mut TernTray| {
-                    let _ = t.gui_tx.try_send(Update::Quit);
+                    // Disconnect the tunnel, then quit (handled by the actor) — no orphan tunnel on exit.
+                    let _ = t.cmd_tx.try_send(Cmd::Quit);
                 }),
                 ..Default::default()
             }
