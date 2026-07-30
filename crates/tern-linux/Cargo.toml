@@ -1,0 +1,17 @@
+[package]
+name = "tern-linux"
+description = "Linux system-integration backends for tern (NetworkManager, GVfs, keyring) via standard CLIs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tern-core = { path = "../tern-core" }
+anyhow.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["io-util"] }

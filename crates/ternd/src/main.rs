@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use tern_core::backend::StubBackend;
 use tern_core::config::Config;
 use tern_core::engine::Engine;
 use tern_core::ipc::{BUS_NAME, OBJECT_PATH};
@@ -44,12 +43,20 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Construct the engine with the appropriate backends for this build target.
+/// Construct the engine with the appropriate backends for this build target: the real
+/// NetworkManager/GVfs/keyring backends on Linux, the in-memory stub elsewhere (macOS/CI build hosts).
 fn build_engine() -> Engine {
     let ucs = UcsClient::new(Endpoints::default());
     let config = Config::load();
 
-    // TODO(M4): on Linux, swap in tern-linux's NetworkManager/GVfs/libsecret backends here.
-    let stub = Arc::new(StubBackend::new());
-    Engine::new(ucs, stub.clone(), stub.clone(), stub.clone(), stub, config)
+    #[cfg(target_os = "linux")]
+    {
+        let (vpn, mounts, reach, secrets) = tern_linux::backends();
+        Engine::new(ucs, vpn, mounts, reach, secrets, config)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let stub = Arc::new(tern_core::backend::StubBackend::new());
+        Engine::new(ucs, stub.clone(), stub.clone(), stub.clone(), stub, config)
+    }
 }

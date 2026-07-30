@@ -1557,6 +1557,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tern-linux"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "tern-core",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "ternd"
 version = "1.0.0"
 dependencies = [
@@ -1564,6 +1575,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tern-core",
+ "tern-linux",
  "tokio",
  "tracing",
  "tracing-subscriber",

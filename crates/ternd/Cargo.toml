@@ -22,3 +22,7 @@ tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zbus.workspace = true
+
+# Real system backends only exist on Linux; other targets (macOS/CI build hosts) use the in-memory stub.
+[target.'cfg(target_os = "linux")'.dependencies]
+tern-linux = { path = "../tern-linux" }
