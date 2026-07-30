@@ -1,0 +1,6 @@
+/target
+/dist
+**/*.rs.bk
+*.swp
+.DS_Store
+.claude/settings.local.json

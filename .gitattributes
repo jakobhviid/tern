@@ -1,0 +1,2 @@
+ci/*.rb.tmpl linguist-language=Ruby
+* text=auto eol=lf

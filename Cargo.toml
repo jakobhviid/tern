@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "1.0.0"                 # baseline only — release CI derives the real version from commit history
+edition = "2021"
+license = "MIT"
+authors = ["Jakob Hviid, PhD <jakob@hviid.phd>"]
+homepage = "https://github.com/jakobhviid/unifi-endpoint-linux"
+repository = "https://github.com/jakobhviid/unifi-endpoint-linux"
+rust-version = "1.82"
+
+# Shared dependency versions, pinned once for the whole workspace (see ADR-0003).
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "process", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+url = "2"
+base64 = "0.22"
+zeroize = { version = "1", features = ["derive"] }
+directories = "5"
+# WireGuard key material (X25519) — permissive (BSD/MIT), no OpenSSL.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+# Dev / test
+wiremock = "0.6"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
