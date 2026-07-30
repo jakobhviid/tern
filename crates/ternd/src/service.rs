@@ -83,6 +83,24 @@ impl TernService {
         self.finish(res, &emitter).await
     }
 
+    /// Pair with a console using a Teleport invite (`teleport.ui.link/<uuid>`) and bring the tunnel up — the
+    /// consumer-account path (ADR-0016), replacing browser SSO. The invite is validated here; the broker
+    /// pairing + ICE nomination + userspace-WireGuard/TUN data plane (stages ③–⑥) are still being built, so a
+    /// *valid* invite currently reports that connecting isn't available yet (an invalid one reports why).
+    async fn redeem_invite(
+        &self,
+        url: String,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> String {
+        let res: tern_core::Result<()> = match tern_core::teleport::Invite::parse(&url) {
+            Ok(_invite) => Err(tern_core::Error::Other(anyhow::anyhow!(
+                "teleport pairing is not implemented yet (ADR-0016 stages 3-6)"
+            ))),
+            Err(e) => Err(e),
+        };
+        self.finish(res, &emitter).await
+    }
+
     async fn sign_out(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) -> String {
         let res = self.engine.lock().await.sign_out().await;
         self.finish(res, &emitter).await

@@ -12,13 +12,14 @@ use gtk::glib;
 use ksni::blocking::TrayMethods;
 use tern_core::ipc::APP_ID;
 use tern_core::state::{Access, Auth, Snapshot};
+use tern_core::teleport::Invite;
 
 mod tray;
 use tray::TernTray;
 
 /// Commands from the UI/tray to the D-Bus actor.
 enum Cmd {
-    StartSignIn,
+    RedeemInvite(String),
     Connect(String),
     Disconnect,
     SignOut,
@@ -43,7 +44,7 @@ enum Update {
 )]
 trait Tern {
     async fn snapshot(&self) -> zbus::Result<String>;
-    async fn start_sign_in(&self) -> zbus::Result<String>;
+    async fn redeem_invite(&self, url: &str) -> zbus::Result<String>;
     async fn connect(&self, console_id: &str) -> zbus::Result<String>;
     async fn disconnect(&self) -> zbus::Result<String>;
     async fn sign_out(&self) -> zbus::Result<String>;
@@ -141,7 +142,7 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
 
     while let Ok(cmd) = cmd_rx.recv().await {
         let _ = match cmd {
-            Cmd::StartSignIn => proxy.start_sign_in().await,
+            Cmd::RedeemInvite(url) => proxy.redeem_invite(&url).await,
             Cmd::Connect(id) => proxy.connect(&id).await,
             Cmd::Disconnect => proxy.disconnect().await,
             Cmd::SignOut => proxy.sign_out().await,
@@ -188,6 +189,24 @@ fn build_ui(
     summary.set_wrap(true);
     content.append(&summary);
 
+    // Onboarding: paste a Teleport invite (`teleport.ui.link/<uuid>`) generated in the console
+    // (Settings → VPN → Teleport). Validated locally + instantly via `Invite::parse`; the pairing itself
+    // goes to the daemon. This replaces the old (dead) browser-OAuth "Sign in" button (ADR-0016/docs/09).
+    let invite_group = adw::PreferencesGroup::builder()
+        .title("Connect a console")
+        .description("Paste the Teleport invite from your console (Settings → VPN → Teleport).")
+        .build();
+    let invite_row = adw::EntryRow::builder().title("Teleport invite").build();
+    invite_group.add(&invite_row);
+    content.append(&invite_group);
+
+    let connect_btn = gtk::Button::with_label("Connect");
+    connect_btn.add_css_class("suggested-action");
+    connect_btn.add_css_class("pill");
+    connect_btn.set_halign(gtk::Align::Center);
+    connect_btn.set_sensitive(false);
+    content.append(&connect_btn);
+
     let access_group = adw::PreferencesGroup::new();
     access_group.set_title("Access");
     let access_row = adw::ActionRow::builder().title("One-Click VPN").subtitle("Off").build();
@@ -209,10 +228,7 @@ fn build_ui(
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::Start);
-    let signin = gtk::Button::with_label("Sign in");
-    signin.add_css_class("suggested-action");
-    let signout = gtk::Button::with_label("Sign out");
-    actions.append(&signin);
+    let signout = gtk::Button::with_label("Forget this console");
     actions.append(&signout);
     content.append(&actions);
 
@@ -246,10 +262,26 @@ fn build_ui(
             glib::Propagation::Proceed
         });
     }
+    // Local, instant invite validation: enable Connect only when the pasted text is a valid
+    // `teleport.ui.link` invite (or bare UUID); flag an obviously-wrong non-empty entry.
+    {
+        let connect_btn = connect_btn.clone();
+        invite_row.connect_changed(move |row| {
+            let text = row.text();
+            let valid = !text.is_empty() && Invite::parse(text.as_str()).is_ok();
+            connect_btn.set_sensitive(valid);
+            if text.is_empty() || valid {
+                row.remove_css_class("error");
+            } else {
+                row.add_css_class("error");
+            }
+        });
+    }
     {
         let cmd_tx = cmd_tx.clone();
-        signin.connect_clicked(move |_| {
-            let _ = cmd_tx.try_send(Cmd::StartSignIn);
+        let invite_row = invite_row.clone();
+        connect_btn.connect_clicked(move |_| {
+            let _ = cmd_tx.try_send(Cmd::RedeemInvite(invite_row.text().to_string()));
         });
     }
     {
@@ -271,6 +303,16 @@ fn build_ui(
                 Update::Quit => app_loop.quit(),
                 Update::Disconnected(reason) => {
                     summary.set_text("Background service not running");
+                    for w in [
+                        invite_group.upcast_ref::<gtk::Widget>(),
+                        connect_btn.upcast_ref(),
+                        access_group.upcast_ref(),
+                        drives_label.upcast_ref(),
+                        drives_list.upcast_ref(),
+                        actions.upcast_ref(),
+                    ] {
+                        w.set_visible(false);
+                    }
                     access_switch.set_sensitive(false);
                     if let Some(h) = &tray_handle {
                         h.update(|t| t.snapshot = Snapshot::signed_out());
@@ -278,6 +320,16 @@ fn build_ui(
                     tracing::warn!(%reason, "actor disconnected");
                 }
                 Update::Snapshot(snap) => {
+                    // Window is a state machine over `auth`: onboarding (paste an invite) until signed in,
+                    // then the main view (Access + drives). See docs/09.
+                    let signed_in = matches!(snap.auth, Auth::SignedIn(_));
+                    invite_group.set_visible(!signed_in);
+                    connect_btn.set_visible(!signed_in);
+                    access_group.set_visible(signed_in);
+                    drives_label.set_visible(signed_in);
+                    drives_list.set_visible(signed_in);
+                    actions.set_visible(signed_in);
+
                     summary.set_text(&snap.summary_line());
                     access_switch.set_sensitive(true);
                     access_row.set_subtitle(access_subtitle(snap.access));
