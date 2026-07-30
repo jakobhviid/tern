@@ -26,8 +26,30 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let engine = build_engine();
-    let service = TernService::new(Arc::new(Mutex::new(engine)));
+    let engine = Arc::new(Mutex::new(build_engine()));
+
+    // Restore a saved session at startup, and honour "connect at startup" (before clients connect, so no
+    // signal emission is needed — the first snapshot they read reflects the result).
+    {
+        let engine = engine.clone();
+        tokio::spawn(async move {
+            let mut e = engine.lock().await;
+            match e.restore_session().await {
+                Ok(true) => {
+                    tracing::info!("restored saved session");
+                    if e.config().connect_at_startup {
+                        if let Err(err) = e.connect("").await {
+                            tracing::warn!(error = %err, "connect-at-startup failed");
+                        }
+                    }
+                }
+                Ok(false) => tracing::info!("no saved session"),
+                Err(err) => tracing::warn!(error = %err, "restoring session failed"),
+            }
+        });
+    }
+
+    let service = TernService::new(engine);
 
     let _conn = zbus::connection::Builder::session()?
         .name(BUS_NAME)?

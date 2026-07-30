@@ -105,15 +105,25 @@ jakobhviid/homebrew-tap yet** (owner instruction).
 **Why:** Meets the test machine where it lives; sandbox story is clean with the delegated design.
 **Revisit if:** Flatpak can't drive NM/GVfs acceptably on Bazzite → lead with native rpm + a systemd user service.
 
-## ADR-0009 — Auth: system-browser SSO, mirror the Mac app 🟢
+## ADR-0009 — Auth: system-browser SSO (passkey-compatible), loopback callback 🟢
 **Context:** The Mac app signs in via the system browser (handles MFA + enterprise SAML/IdP transparently),
-then uses the resulting session for the UCS API (doc 02 UPDATE).
-**Options:** scripted username/password+TOTP (reference-client style — breaks on SAML/push); **browser OAuth
-+ custom URL-scheme callback** (`x-scheme-handler/identity-standard`).
-**Decision:** **Browser SSO + loopback/scheme callback**, tokens in the system keyring (oo7). Adapt the
-reference clients only for the post-login UCS calls.
-**Why:** Transparently supports MFA/SAML, matches the real client, less brittle, no password handling.
-**Revisit if:** the scheme callback is unreliable inside Flatpak → use a localhost loopback redirect instead.
+then uses the resulting session for the UCS API (doc 02 UPDATE). **Owner note: the login flow often uses
+passkeys (WebAuthn/FIDO2).**
+**Options:** scripted username/password+TOTP (reference-client style — breaks on SAML/push **and cannot do
+passkeys**); an embedded webview (many lack a WebAuthn platform authenticator); **system-browser OAuth** + callback.
+**Decision:** **System-browser SSO** (RFC 8252 native-app flow + PKCE). Callback via a **loopback redirect**
+(`http://127.0.0.1:<port>/callback`) as the primary mechanism, with the custom scheme
+(`x-scheme-handler/identity-standard`) as a fallback. `ternd` owns the ephemeral loopback listener + token
+exchange; tokens go to the system keyring (oo7). We never see credentials.
+**Why:** Only the real browser gives **passkey/WebAuthn** support (platform authenticator: Touch ID, security
+key, phone passkey) — plus MFA + SAML — for free. Loopback is the most reliable callback across desktops and
+inside Flatpak (custom-scheme registration is finicky there).
+**Revisit if:** the SSO requires a fixed/registered redirect URI disallowing loopback → fall back to the custom
+scheme. Confirm the exact redirect + whether the flow is OAuth/OIDC during the Bazzite traffic capture (M7).
+**Status:** the browser-launch + loopback-catch + token-exchange **mechanism is built and unit-tested**
+(`tern_core::auth` — incl. the RFC 7636 PKCE test vector and a live loopback-capture test). `ternd` exposes
+`StartSignIn` (browser flow) with a `CompleteSignIn(token)` fallback; `tern login` and the GUI "Sign in" button
+drive it. Only the UniFi authorize/token URLs + `client_id` remain to pin from the M7 capture.
 
 ## ADR-0010 — Names & identifiers 🔵 (owner may override freely)
 **Decision:** Product codename **"tern"** (a long-migration seabird that returns home — fits roaming access to
@@ -160,3 +170,17 @@ headless **`tern-cli`** (which *can* build static). Reuse the awk version-stamp 
 Tap push stays **disabled** until the owner provisions secrets and says go (owner said don't push to the tap yet).
 **Why:** Keep the parts of their pipeline that fit; diverge only where the GUI/Flatpak reality demands, and say why.
 **Revisit:** once building on Bazzite, confirm the Flatpak build + the CLI bottle both work end-to-end.
+
+## ADR-0014 — Backend delivery: CLI-exec now (native), D-Bus needed for Flatpak 🟡
+**Context:** `tern-linux` backends shell out to `nmcli` / `gio` / `secret-tool`. That works for **native**
+installs (immediate Bazzite testing via source/brew/rpm) but **not inside a Flatpak sandbox** — `nmcli` isn't
+in the GNOME runtime (and `secret-tool` may not be), while `gio` is. Flathub is the eventual release target.
+**Decision:** Ship the **CLI-exec backends now** for native/immediate testing. **Before the Flathub release,
+port the VPN backend to D-Bus** (NetworkManager via `zbus` on the system bus + `--system-talk-name`),
+secrets to the **Secret Service D-Bus / Secret portal**, and keep mounts on **GVfs** (`gio` is in the runtime;
+otherwise GVfs D-Bus). The engine's trait seams (`VpnBackend`/`MountBackend`/`SecretStore`) make each a
+drop-in swap — **no `tern-core` changes**.
+**Why:** D-Bus backends are unprivileged *and* Flatpak-compatible (the right end-state); CLI-exec is the
+fastest correct path for native testing today, and it's verifiable on macOS (pure `std::process`).
+**Revisit:** implement + test the D-Bus NetworkManager backend on Bazzite → the Flatpak becomes fully
+functional. Until then, the Flatpak manifest is scaffolding (VPN won't work in-sandbox with the nmcli backend).
