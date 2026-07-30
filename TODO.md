@@ -118,6 +118,47 @@ reachable endpoint** (the owner's does; there's also a plain "WireGuard Server" 
 
 ---
 
+## Standards mapping (read the capture through this lens — it's not bespoke magic)
+
+None of this is off-menu. It's a **ZTNA device-onboarding stack** (the Tailscale / Cloudflare WARP / Twingate
+shape — Ubiquiti's own docs call it "ZTNA"), assembled from standard pieces. Recognising them turns the capture
+from blind RE into *confirming a mapping*:
+
+1. **Login / identity = OAuth 2.0.**
+   - `sso.ui.com/oauth2/*` is literal **OIDC — Authorization Code + PKCE** (RFC 6749 + RFC 7636; `S256` confirmed).
+     (This is the *enterprise SSO-Apps* server — needs a client_id we don't have; not the consumer path.)
+   - The app-onboarding code flow (`POST /api/sso/v1/login/token/setup` → short code; poll
+     `POST …/login/token/poll` → `202 {"status":"pending"}` until authorized) is the **OAuth 2.0 Device
+     Authorization Grant, RFC 8628**, near beat-for-beat: setup ≈ device-authorization endpoint (issues
+     `device_code`/`user_code`), poll ≈ token endpoint polled with the device_code returning
+     `authorization_pending`. It's a **bespoke variant** (custom JSON `{"status":"pending"}` vs RFC 8628's
+     `{"error":"authorization_pending"}`; the "enter this code in your Endpoint" UX = the `user_code`), but the
+     semantics are RFC 8628. **Expect/implement it as device flow — look for `interval`, `expires_in`, pending.**
+2. **Device credential = public-key-bound token / device enrollment.** `identity/public_key` +
+   `credential/{device,confirm,download}` = *device registers a keypair → gets a credential bound to it* —
+   the **DPoP (RFC 9449) / mTLS-bound-token (RFC 8705) / cert-enrollment (EST, RFC 7030)** family, and exactly how
+   a WireGuard control plane onboards a node (register node pubkey → receive config).
+3. **Control-plane signing = AWS SigV4 + Cognito.** The bundled AWS SDK (Cognito, SigV4, AWSIoT) means some calls
+   are **SigV4-signed with Cognito temporary credentials** (session/cookie → Cognito creds → signed requests), and
+   signaling rides **AWS IoT MQTT**. (This is explicit in the MIT `telepy-cli` consumer-Teleport reference.)
+4. **Coordination → data plane = WireGuard (+ ICE/STUN in the Teleport variant).** A coordination service returns a
+   **WireGuard** peer config (Noise/Curve25519). The consumer *Teleport* path adds **ICE/STUN (RFC 8445 / 5389)**
+   for NAT traversal (the WebRTC bits in the fingerprint); the UCS `vpn/session` path returns a directly-usable
+   config when the console has a reachable endpoint (so NetworkManager suffices — no ICE needed).
+
+**One-liner:** OIDC + an RFC-8628-shaped device enrollment + a key-bound device credential + a WireGuard
+coordination server, glued with AWS SigV4/IoT.
+
+**So when reading the capture, expect to find (and map):**
+- `login/token/setup` / `poll`  ↔  RFC 8628 device authorization + token poll,
+- `identity/public_key` + `credential/*`  ↔  "upload my WG public key, get a bound credential",
+- `vpn/session`  ↔  "authenticated with that credential, give me a WireGuard peer config".
+
+**Caveats (stay honest):** it's *shaped like* these RFCs, not literally them — exact param names / JSON bodies are
+bespoke and still need the capture; and knowing the pattern does **not** remove the capture (paths are auth-walled).
+
+---
+
 ## ⛔ THE blocker → the one task that unblocks everything: capture the real app
 
 We need **one** traffic capture of the genuine **macOS _UniFi Endpoint_ app** (`/Applications/UniFi Endpoint.app`,
