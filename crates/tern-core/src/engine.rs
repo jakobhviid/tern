@@ -105,13 +105,15 @@ impl Engine {
         self.access = Access::TurningOn;
         let public_key = self.ensure_keypair().await?;
         self.ucs.enroll_public_key(&public_key).await?;
-        let session = self.ucs.create_vpn_session(console_id, &public_key).await?;
-        if !session.wg.has_dialable_endpoint() {
+        let mut wg = self.ucs.create_vpn_session(console_id, &public_key).await?.wg;
+        if !wg.has_dialable_endpoint() {
             // Console is relay-only (needs UniFi's proprietary bridge) — out of scope; be honest, don't fake.
             self.access = Access::Unreachable;
             return Err(Error::RelayOnly);
         }
-        self.vpn.connect(&session.wg).await?;
+        // Inject our device private key (from the keyring) so the backend can build the tunnel.
+        wg.client_private_key = self.secrets.get(WG_PRIVATE_KEY).await?;
+        self.vpn.connect(&wg).await?;
         if !self.vpn.is_active().await? {
             self.access = Access::Unreachable;
             return Err(Error::VpnUnreachable);

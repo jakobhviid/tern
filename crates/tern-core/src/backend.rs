@@ -144,6 +144,7 @@ mod tests {
             persistent_keepalive: Some(25),
             address: vec!["10.2.0.5/32".into()],
             dns: vec![],
+            client_private_key: None,
         }
     }
 

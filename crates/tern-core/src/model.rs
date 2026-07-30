@@ -49,6 +49,10 @@ pub struct WireguardConfig {
     pub address: Vec<String>,
     #[serde(default, alias = "dnsServers", alias = "dns")]
     pub dns: Vec<String>,
+    /// Our device private key (base64), injected by the engine from the keyring before connecting. It never
+    /// comes from the server, so it is skipped in (de)serialization.
+    #[serde(skip)]
+    pub client_private_key: Option<String>,
 }
 
 impl WireguardConfig {
@@ -65,6 +69,36 @@ impl WireguardConfig {
     /// Whether this is a full-tunnel config (default route present) vs. split-tunnel.
     pub fn is_full_tunnel(&self) -> bool {
         self.allowed_ips.iter().any(|a| a == "0.0.0.0/0" || a == "::/0")
+    }
+
+    /// Render to a `wg-quick`-style `.conf` (used by the NetworkManager import path on Linux). Returns
+    /// `None` if the device private key hasn't been injected yet.
+    pub fn to_wg_quick(&self) -> Option<String> {
+        let private = self.client_private_key.as_deref()?;
+        let mut s = String::from("[Interface]\n");
+        s.push_str(&format!("PrivateKey = {private}\n"));
+        if !self.address.is_empty() {
+            s.push_str(&format!("Address = {}\n", self.address.join(", ")));
+        }
+        if !self.dns.is_empty() {
+            s.push_str(&format!("DNS = {}\n", self.dns.join(", ")));
+        }
+        s.push_str("\n[Peer]\n");
+        s.push_str(&format!("PublicKey = {}\n", self.server_public_key));
+        if let Some(psk) = &self.preshared_key {
+            s.push_str(&format!("PresharedKey = {psk}\n"));
+        }
+        s.push_str(&format!("Endpoint = {}\n", self.endpoint));
+        let allowed = if self.allowed_ips.is_empty() {
+            "0.0.0.0/0, ::/0".to_string()
+        } else {
+            self.allowed_ips.join(", ")
+        };
+        s.push_str(&format!("AllowedIPs = {allowed}\n"));
+        if let Some(k) = self.persistent_keepalive {
+            s.push_str(&format!("PersistentKeepalive = {k}\n"));
+        }
+        Some(s)
     }
 }
 
@@ -143,5 +177,30 @@ mod tests {
         let b: Host = serde_json::from_value(serde_json::json!({"id":"c1"})).unwrap();
         assert_eq!(a.console_id, "c1");
         assert_eq!(a.console_id, b.console_id);
+    }
+
+    #[test]
+    fn renders_wg_quick_only_with_private_key() {
+        let mut cfg: WireguardConfig = serde_json::from_value(serde_json::json!({
+            "serverPublicKey": "srv",
+            "endpoint": "1.2.3.4:51820",
+            "allowedIps": ["10.0.0.0/8"],
+            "persistentKeepalive": 25,
+            "clientAddress": ["10.2.0.5/32"],
+            "dnsServers": ["10.0.0.1"]
+        }))
+        .unwrap();
+        assert!(cfg.to_wg_quick().is_none(), "no private key yet");
+
+        cfg.client_private_key = Some("PRIVKEYB64".into());
+        let conf = cfg.to_wg_quick().unwrap();
+        assert!(conf.contains("[Interface]"));
+        assert!(conf.contains("PrivateKey = PRIVKEYB64"));
+        assert!(conf.contains("Address = 10.2.0.5/32"));
+        assert!(conf.contains("DNS = 10.0.0.1"));
+        assert!(conf.contains("PublicKey = srv"));
+        assert!(conf.contains("Endpoint = 1.2.3.4:51820"));
+        assert!(conf.contains("AllowedIPs = 10.0.0.0/8"));
+        assert!(conf.contains("PersistentKeepalive = 25"));
     }
 }
