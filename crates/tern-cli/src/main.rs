@@ -27,12 +27,12 @@ Commands:
 
 Global: --json (machine-readable output), --llm (this guide).
 All state is produced by ternd; the CLI only renders it. Requires ternd running on the session bus (\
-phd.hviid.Tern).
+phd.hviid.Tern.Daemon).
 ";
 
 #[zbus::proxy(
-    interface = "phd.hviid.Tern",
-    default_service = "phd.hviid.Tern",
+    interface = "phd.hviid.Tern.Daemon",
+    default_service = "phd.hviid.Tern.Daemon",
     default_path = "/phd/hviid/Tern"
 )]
 trait Tern {

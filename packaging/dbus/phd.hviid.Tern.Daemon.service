@@ -1,0 +1,8 @@
+# D-Bus session activation: connecting to phd.hviid.Tern.Daemon auto-starts ternd (no manual start needed).
+# The bus name is a sub-name of the desktop app-id (phd.hviid.Tern) so it never collides with the GUI's
+# GtkApplication, which owns the bare app-id. Native install path shown; the Flatpak manifest installs its
+# own copy pointing at /app/bin/ternd.
+[D-BUS Service]
+Name=phd.hviid.Tern.Daemon
+Exec=/usr/bin/ternd
+SystemdService=tern.service

@@ -10,7 +10,7 @@ use adw::prelude::*;
 use futures_util::StreamExt;
 use gtk::glib;
 use ksni::blocking::TrayMethods;
-use tern_core::ipc::BUS_NAME;
+use tern_core::ipc::APP_ID;
 use tern_core::state::{Access, Auth, Snapshot};
 
 mod tray;
@@ -37,8 +37,8 @@ enum Update {
 }
 
 #[zbus::proxy(
-    interface = "phd.hviid.Tern",
-    default_service = "phd.hviid.Tern",
+    interface = "phd.hviid.Tern.Daemon",
+    default_service = "phd.hviid.Tern.Daemon",
     default_path = "/phd/hviid/Tern"
 )]
 trait Tern {
@@ -70,7 +70,10 @@ fn main() -> glib::ExitCode {
         rt.block_on(actor(cmd_rx, actor_tx));
     });
 
-    let app = adw::Application::builder().application_id(BUS_NAME).build();
+    // The GUI's GtkApplication owns the desktop APP_ID on the session bus (drives the Wayland app_id /
+    // window↔.desktop↔icon association). It must NOT be the daemon's BUS_NAME, or GApplication would try
+    // to talk to ternd as if it were the primary GApplication instance and abort at registration.
+    let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(move |app| {
         build_ui(app, cmd_tx.clone(), update_tx.clone(), update_rx.clone())
     });

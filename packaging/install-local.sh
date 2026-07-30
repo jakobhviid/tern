@@ -24,11 +24,12 @@ install -Dm644 packaging/phd.hviid.Tern.metainfo.xml \
 install -Dm644 packaging/systemd/tern.service \
   "$HOME/.config/systemd/user/tern.service"
 
-# D-Bus session activation pointing at the user-installed binary.
+# D-Bus session activation pointing at the user-installed binary. The daemon owns a sub-name of the
+# desktop app-id (phd.hviid.Tern) so it never collides with the GUI's GtkApplication (see ADR-0015).
 mkdir -p "$HOME/.local/share/dbus-1/services"
-cat > "$HOME/.local/share/dbus-1/services/phd.hviid.Tern.service" <<EOF
+cat > "$HOME/.local/share/dbus-1/services/phd.hviid.Tern.Daemon.service" <<EOF
 [D-BUS Service]
-Name=phd.hviid.Tern
+Name=phd.hviid.Tern.Daemon
 Exec=$BIN/ternd
 SystemdService=tern.service
 EOF

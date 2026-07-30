@@ -5,6 +5,7 @@
 
 use ksni::menu::StandardItem;
 use ksni::{MenuItem, ToolTip, Tray};
+use tern_core::ipc::APP_ID;
 use tern_core::state::{Access, Snapshot, TrayVisual};
 
 use crate::{Cmd, Update};
@@ -19,7 +20,7 @@ pub struct TernTray {
 
 impl Tray for TernTray {
     fn id(&self) -> String {
-        "phd.hviid.Tern".into()
+        APP_ID.into()
     }
 
     fn title(&self) -> String {

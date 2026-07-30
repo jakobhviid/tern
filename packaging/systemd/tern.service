@@ -10,7 +10,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=dbus
-BusName=phd.hviid.Tern
+BusName=phd.hviid.Tern.Daemon
 ExecStart=%h/.local/bin/ternd
 Restart=on-failure
 RestartSec=3

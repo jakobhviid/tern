@@ -41,7 +41,7 @@ impl TernService {
     }
 }
 
-#[interface(name = "phd.hviid.Tern")]
+#[interface(name = "phd.hviid.Tern.Daemon")]
 impl TernService {
     /// Current UI snapshot as JSON.
     async fn snapshot(&self) -> String {

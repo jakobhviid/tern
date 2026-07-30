@@ -1,6 +1,0 @@
-# D-Bus session activation: connecting to phd.hviid.Tern auto-starts ternd (no manual start needed).
-# Native install path shown; the Flatpak manifest installs its own copy pointing at /app/bin/ternd.
-[D-BUS Service]
-Name=phd.hviid.Tern
-Exec=/usr/bin/ternd
-SystemdService=tern.service

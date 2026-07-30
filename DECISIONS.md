@@ -184,3 +184,31 @@ drop-in swap — **no `tern-core` changes**.
 fastest correct path for native testing today, and it's verifiable on macOS (pure `std::process`).
 **Revisit:** implement + test the D-Bus NetworkManager backend on Bazzite → the Flatpak becomes fully
 functional. Until then, the Flatpak manifest is scaffolding (VPN won't work in-sandbox with the nmcli backend).
+
+## ADR-0015 — Daemon bus name is a sub-name of the app-id (`phd.hviid.Tern.Daemon`) 🟢
+**Context:** First real Bazzite bring-up (daemon + GUI running together on one session bus, which had never
+happened before — on macOS they aren't co-run). The GUI aborted at startup with
+`GDBus...UnknownInterface: 'org.gtk.Actions'`. Cause: `ternd` owns the well-known name `phd.hviid.Tern`
+(ADR-0010), and the GUI's `adw::Application` used that **same** string as its `application_id`. A
+`GtkApplication` always tries to own its app-id on the session bus; finding it already owned, GApplication
+assumed a *primary GApplication instance* lived there and tried to talk `org.gtk.Application`/`org.gtk.Actions`
+to `ternd` (a plain zbus service) — which doesn't implement those — so registration failed and the GUI quit.
+**Options:** (a) `G_APPLICATION_NON_UNIQUE` on the GUI — a hack; loses single-instance/actions/portal, and
+Flatpak wants the GUI to actually **own** the app-id; (b) give the GUI a different app-id like
+`phd.hviid.Tern.Gui` — but the Wayland `app_id`/WM-class then wouldn't match the `.desktop`/icon (broken icon)
+and Flatpak requires the primary GApplication id == the Flatpak id; (c) **keep the app-id on the GUI, move the
+daemon to a sub-name.**
+**Decision:** **(c).** The **desktop app-id stays `phd.hviid.Tern`** (`.desktop`/icon/metainfo/Flatpak id **and**
+the GUI's `GtkApplication` id → Wayland app_id). The **daemon's D-Bus service + interface name becomes
+`phd.hviid.Tern.Daemon`** (a sub-name of the app-id); object path stays `/phd/hviid/Tern`. New constant
+`ipc::APP_ID` (GUI/tray) is now distinct from `ipc::BUS_NAME`/`INTERFACE` (daemon). Updated: `ternd`,
+`tern-cli`, `tern-gui`, the systemd unit `BusName=`, the D-Bus activation file (renamed
+`phd.hviid.Tern.Daemon.service`), `install-local.sh`, and the Flatpak manifest's activation block.
+**Why:** This is the standard GNOME/Flatpak split — the user-facing app owns the app-id; background helpers take
+sub-names. It removes the collision **and** improves the Flatpak story (a sandbox auto-owns app-id sub-names, so
+no extra `--own-name` is needed). Amends ADR-0010's "D-Bus id `phd.hviid.Tern`": the *app/Flatpak* id is
+unchanged; only the *daemon's* bus/interface name gains the `.Daemon` suffix.
+**Verified:** on Bazzite/GNOME — daemon (`phd.hviid.Tern.Daemon`) and GUI (`phd.hviid.Tern`) now coexist on the
+session bus; `tern status` and the GUI both render "Not signed in"; the GUI no longer aborts at registration.
+**Revisit if:** the owner renames the product (grep `phd.hviid.Tern`); if a future single-binary/monolith mode
+(ADR-0002 fallback) runs the engine inside the GUI process, the split is moot (one process owns the app-id).

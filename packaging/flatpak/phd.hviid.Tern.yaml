@@ -45,12 +45,14 @@ modules:
           /app/share/metainfo/phd.hviid.Tern.metainfo.xml
       - install -Dm644 data/icons/hicolor/scalable/apps/phd.hviid.Tern.svg
           /app/share/icons/hicolor/scalable/apps/phd.hviid.Tern.svg
-      # D-Bus activation so connecting to the service starts ternd inside the sandbox.
+      # D-Bus activation so connecting to the service starts ternd inside the sandbox. The daemon owns a
+      # sub-name of the app-id (phd.hviid.Tern.Daemon) — auto-owned by the sandbox — leaving the bare
+      # app-id to the GUI's GtkApplication (ADR-0015).
       - |
         install -d /app/share/dbus-1/services
-        cat > /app/share/dbus-1/services/phd.hviid.Tern.service <<'EOF'
+        cat > /app/share/dbus-1/services/phd.hviid.Tern.Daemon.service <<'EOF'
         [D-BUS Service]
-        Name=phd.hviid.Tern
+        Name=phd.hviid.Tern.Daemon
         Exec=/app/bin/ternd
         EOF
     sources:
