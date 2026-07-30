@@ -20,6 +20,8 @@ Ubiquiti. This file is the contract for any human or AI agent working here. Read
    asserts error titles contain no jargon — keep it passing.
 5. **Licensing (see `docs/04`): stay MIT.** Never in-process-link **sing-box (GPL-3)** or **libsmbclient
    (GPL-3)**. Get userspace WireGuard from permissive crates; reach SMB via GVfs or by exec'ing tools.
+   **Enforced in CI** by `cargo deny check` (`deny.toml`): the license allow-list has no GPL/copyleft-only
+   entries, and OpenSSL/native-tls are banned (we use rustls). Run `cargo deny check licenses bans sources`.
 6. **No secrets in the repo.** Nothing private — no tokens, keys, or real UniFi credentials. Everything here
    must be reproducible by anyone doing the same public analysis.
 

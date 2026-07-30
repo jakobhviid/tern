@@ -1,0 +1,38 @@
+# cargo-deny policy — enforces the licensing decision (ADR-0007) and the rustls/no-OpenSSL choice (ADR-0001)
+# in CI, so a copyleft or OpenSSL dependency can never sneak in unnoticed.
+# Run: cargo deny check licenses bans sources
+
+[licenses]
+# Only these (all permissive / weak-file-level) are allowed. Anything else — notably GPL/AGPL/LGPL-only —
+# is an error. This is the automated guard behind "stay MIT; never link GPL" (docs/04, ADR-0007).
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",       # weak, file-level copyleft (option-ext, via directories) — safe as a dependency
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+# We deliberately use rustls, never OpenSSL (ADR-0001) — fail if OpenSSL is ever pulled in.
+deny = [
+    { name = "openssl-sys" },
+    { name = "openssl" },
+    { name = "native-tls" },
+]
+# The dependency tree legitimately has a few duplicate major versions (thiserror 1/2, syn 2/3, windows-sys,
+# toml, getrandom); don't fail on those.
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

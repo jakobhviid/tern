@@ -24,3 +24,13 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+
+  deny:
+    # Enforce the licensing decision (ADR-0007) + rustls/no-OpenSSL (ADR-0001): no GPL/copyleft-only or
+    # OpenSSL dependency can slip in unnoticed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources
