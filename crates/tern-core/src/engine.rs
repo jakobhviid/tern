@@ -129,6 +129,11 @@ impl Engine {
         let _ = self.disconnect().await;
         self.secrets.delete(TOKEN_KEY).await?;
         self.ucs.set_token(None);
+        // "Forget this console" is a full reset: also drop a redeemed Teleport session and any imported
+        // config, so nothing reconnects afterwards without fresh credentials.
+        let _ = self.secrets.delete(TELEPORT_SESSION_KEY).await;
+        self.teleport_session = None;
+        self.imported_conf = None;
         self.auth = Auth::SignedOut;
         self.hosts.clear();
         self.drives.clear();
@@ -512,5 +517,19 @@ mod tests {
         // Forget drops the persisted session; reconnect then needs a new invite.
         engine.forget_teleport().await.unwrap();
         assert!(engine.secrets.get(TELEPORT_SESSION_KEY).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn signing_out_also_forgets_a_teleport_console() {
+        let server = MockServer::start().await;
+        let mut engine = engine_for(&server, Config::default());
+        engine.redeem_invite(INVITE_UUID).await.unwrap();
+
+        // "Forget this console" (sign-out) is a full reset even for a Teleport-only user.
+        engine.sign_out().await.unwrap();
+        assert_eq!(engine.snapshot().await.access, Access::Off);
+        assert!(engine.secrets.get(TELEPORT_SESSION_KEY).await.unwrap().is_none());
+        // Nothing reconnects without a fresh invite.
+        assert!(!engine.restore_teleport_session().await.unwrap());
     }
 }
