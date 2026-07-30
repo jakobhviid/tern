@@ -143,9 +143,12 @@ impl Tunnel {
         Ok(Tunnel { stop, task, stats, interface: if_name.to_string(), address, prefix })
     }
 
-    /// Stop the tunnel: signal the pump to exit and wait for it (which drops the TUN device).
+    /// Stop the tunnel: signal the pump to exit and wait for it (which drops the TUN device). Uses
+    /// `notify_one`, not `notify_waiters` — the pump only registers on `stop.notified()` at the top of each
+    /// `select!` iteration, so a `notify_waiters` firing mid-packet would be missed and this would hang;
+    /// `notify_one` stores a permit that the next `notified()` consumes immediately.
     pub async fn stop(self) {
-        self.stop.notify_waiters();
+        self.stop.notify_one();
         let _ = self.task.await;
     }
 }
