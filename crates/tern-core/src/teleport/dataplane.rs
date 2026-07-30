@@ -281,4 +281,58 @@ mod tests {
         assert_eq!(interface_addr(&cfg_with(&["fd00::1"])).unwrap(), ("fd00::1".parse().unwrap(), 128));
         assert!(interface_addr(&cfg_with(&[])).is_err());
     }
+
+    // Handshake + transport between two boringtun peers, driving them exactly the way the pump does
+    // (`Tunn::new(private, peer_public, …)`, then `format_handshake_initiation` / `decapsulate` /
+    // `encapsulate`). This guards the argument order and the TunnResult handling — a swapped key or a
+    // mishandled `WriteToNetwork` would fail the live handshake in a way sockets/TUN can't be unit-tested for.
+    #[test]
+    fn wireguard_handshake_and_transport_round_trip() {
+        use boringtun::x25519::{PublicKey, StaticSecret};
+
+        let client_priv = StaticSecret::random_from_rng(rand_core::OsRng);
+        let server_priv = StaticSecret::random_from_rng(rand_core::OsRng);
+        let client_pub = PublicKey::from(&client_priv);
+        let server_pub = PublicKey::from(&server_priv);
+
+        // Same call shape as Tunnel::start: our private + the peer's public.
+        let mut client = Tunn::new(client_priv, server_pub, None, None, 0, None);
+        let mut server = Tunn::new(server_priv, client_pub, None, None, 1, None);
+
+        let mut a = [0u8; 2048];
+        let mut b = [0u8; 2048];
+
+        // Client → init; server processes it → response; client processes the response.
+        let init = match client.format_handshake_initiation(&mut a, false) {
+            TunnResult::WriteToNetwork(p) => p.to_vec(),
+            other => panic!("expected handshake init, got {other:?}"),
+        };
+        let resp = match server.decapsulate(None, &init, &mut b) {
+            TunnResult::WriteToNetwork(p) => p.to_vec(),
+            other => panic!("expected handshake response, got {other:?}"),
+        };
+        match client.decapsulate(None, &resp, &mut a) {
+            TunnResult::WriteToNetwork(_) | TunnResult::Done => {}
+            other => panic!("client should accept the handshake response, got {other:?}"),
+        }
+        assert!(client.time_since_last_handshake().is_some(), "client handshake did not complete");
+
+        // A plaintext IPv4 packet (20-byte header, 1.2.3.4 → 5.6.7.8) client→server through the tunnel.
+        let mut packet = [0u8; 20];
+        packet[0] = 0x45; // IPv4, IHL 5
+        packet[2] = 0x00;
+        packet[3] = 20; // total length
+        packet[9] = 253; // protocol (experimental)
+        packet[12..16].copy_from_slice(&[1, 2, 3, 4]);
+        packet[16..20].copy_from_slice(&[5, 6, 7, 8]);
+
+        let encrypted = match client.encapsulate(&packet, &mut a) {
+            TunnResult::WriteToNetwork(p) => p.to_vec(),
+            other => panic!("expected an encrypted transport packet, got {other:?}"),
+        };
+        match server.decapsulate(None, &encrypted, &mut b) {
+            TunnResult::WriteToTunnelV4(plain, _) => assert_eq!(plain, &packet),
+            other => panic!("server should decrypt to the original packet, got {other:?}"),
+        }
+    }
 }
