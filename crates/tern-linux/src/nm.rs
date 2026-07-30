@@ -71,6 +71,11 @@ impl VpnBackend for NmVpn {
         Ok(())
     }
 
+    async fn resume(&self) -> Result<()> {
+        // Bring the existing (imported/persisted) profile back up without re-importing.
+        cmd::run("nmcli", &["connection", "up", CONNECTION]).await.map(|_| ())
+    }
+
     async fn disconnect(&self) -> Result<()> {
         // Bring the tunnel down but KEEP the profile — deleting it would destroy an imported WireGuard
         // config the user wants to reuse. The per-session UCS/Teleport path already deletes any stale

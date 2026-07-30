@@ -126,10 +126,16 @@ impl Engine {
 
     /// Turn on Access: enroll our key, provision a VPN session, bring up the tunnel, and auto-mount drives.
     pub async fn connect(&mut self, console_id: &str) -> Result<()> {
-        // Imported-config mode (ADR-0004 fallback, no account): re-up the remembered WireGuard config rather
-        // than running the UCS/Teleport flow, so the Access toggle reconnects it after a disconnect.
+        // Imported-config mode (ADR-0004 fallback, no account): if the user imported a config this session,
+        // the Access toggle reconnects it — resume the still-present profile if possible, else re-import.
+        // (Gated on having an imported config so the account/UCS connect flow below is untouched.)
         if !matches!(self.auth, Auth::SignedIn(_)) {
             if let Some(conf) = self.imported_conf.clone() {
+                self.access = Access::TurningOn;
+                if self.vpn.resume().await.is_ok() && self.vpn.is_active().await.unwrap_or(false) {
+                    self.access = Access::On;
+                    return Ok(());
+                }
                 return self.import_wireguard(conf).await;
             }
         }

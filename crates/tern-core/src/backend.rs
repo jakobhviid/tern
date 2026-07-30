@@ -27,6 +27,9 @@ pub enum Reach {
 #[async_trait]
 pub trait VpnBackend: Send + Sync {
     async fn connect(&self, cfg: &WireguardConfig) -> Result<()>;
+    /// Bring an already-provisioned tunnel back up (a persisted/imported profile that survives a daemon
+    /// restart) without re-importing. Errors if there's nothing to resume.
+    async fn resume(&self) -> Result<()>;
     async fn disconnect(&self) -> Result<()>;
     async fn is_active(&self) -> Result<bool>;
 }
@@ -72,6 +75,10 @@ impl StubBackend {
 #[async_trait]
 impl VpnBackend for StubBackend {
     async fn connect(&self, _cfg: &WireguardConfig) -> Result<()> {
+        self.vpn_active.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+    async fn resume(&self) -> Result<()> {
         self.vpn_active.store(true, Ordering::SeqCst);
         Ok(())
     }
