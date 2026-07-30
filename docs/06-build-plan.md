@@ -12,16 +12,16 @@ being built on macOS but targets Linux/GNOME (Bazzite) — some layers can be pr
 | M2 | `tern-cli`: control client, clap (json/man/completions/llm) | ✅ done | macOS (help/man/completions/llm); Linux (IPC) |
 | M3 | `ternd`: session-bus D-Bus service wrapping the engine (+ Changed signal) | ✅ built | builds+clippy on macOS; runs on Linux |
 | M4 | `tern-linux`: NetworkManager/GVfs/keyring backends via CLIs (nmcli/gio/secret-tool) | ✅ built | compiles on macOS; runs on Bazzite. D-Bus port needed for Flatpak (ADR-0014) |
-| M5 | `tern-gui`: GTK4/libadwaita window + live D-Bus updates | 🟡 window built | **compiled+linked against real gtk4 on macOS**; `ksni` tray pending (Bazzite) |
-| M6 | Packaging: systemd unit, D-Bus activation, desktop, AppStream, icon, Flatpak manifest | 🟡 scaffolded | offline cargo-sources + release CI + tap template pending (Linux/CI) |
+| M5 | `tern-gui`: GTK4/libadwaita window + **ksni tray** + live D-Bus updates | ✅ built | window + tray **compiled/linked against real gtk4 on macOS** *and Ubuntu CI*; runtime-verify on Bazzite |
+| M6 | Packaging: systemd unit, D-Bus activation, desktop, AppStream, icon, Flatpak manifest, `install-local.sh` | 🟡 scaffolded | offline cargo-sources + release CI + tap template pending (Linux/CI) |
 | M7 | Real-account validation: traffic capture → confirm UCS shapes; browser+loopback auth | ⏳ | Bazzite + owner creds |
 
-### Remaining before "usable on Bazzite"
-- **ksni tray** (M5) — the top-bar icon; needs a real SNI host to verify.
+### Remaining before "usable on Bazzite" — see [`07-bazzite-bringup.md`](07-bazzite-bringup.md)
 - **Browser+loopback SSO** (ADR-0009) — replace the `CompleteSignIn(token)` placeholder with the real flow
   (passkey-capable). Exact OAuth params need the M7 capture.
-- **Runtime bring-up on Bazzite** — build from source, `systemctl --user enable --now tern.service`, run the GUI,
-  and iterate the nmcli/gio/secret-tool backends against the real system.
+- **Runtime bring-up on Bazzite** — `./packaging/install-local.sh`, `systemctl --user enable --now tern.service`,
+  run the GUI/tray, then iterate the nmcli/gio/secret-tool backends against the real system.
+- **Flatpak** — port the VPN backend to D-Bus (ADR-0014) + generate `cargo-sources.json`, then build the manifest.
 
 ## What's proven on the Mac right now (M1)
 

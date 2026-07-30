@@ -45,6 +45,11 @@ Distribution targets: **Flatpak** (primary, if feasible) + native `.deb`/`.rpm`/
 | [`docs/03-linux-feasibility-and-architecture.md`](docs/03-linux-feasibility-and-architecture.md) | GNOME-native architecture, recommended Rust stack, effort estimate |
 | [`docs/04-dependencies-and-licensing.md`](docs/04-dependencies-and-licensing.md) | Every dependency, its license + link, GPL-contagion rules, packaging status |
 | [`docs/05-ux-and-error-handling-guidelines.md`](docs/05-ux-and-error-handling-guidelines.md) | Consumer-desktop UX: state model, plain-language errors, notifications |
+| [`docs/06-build-plan.md`](docs/06-build-plan.md) | Milestones + status board; what's proven where |
+| [`docs/07-bazzite-bringup.md`](docs/07-bazzite-bringup.md) | Build/install/run/iterate on the Bazzite (Fedora Atomic) test box |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | How the crates + daemon/clients fit together |
+| [`DECISIONS.md`](DECISIONS.md) | Append-only decision log (ADR-####) with options weighed |
+| [`AGENTS.md`](AGENTS.md) | Working guide + rules for humans/agents in this repo |
 | [`docs/fingerprints/`](docs/fingerprints/) | Raw dated fingerprints of each Mac app version |
 
 ## Tooling
@@ -54,16 +59,25 @@ Distribution targets: **Flatpak** (primary, if feasible) + native `.deb`/`.rpm`/
 
 ## Status
 
-Early build. Research complete (see `docs/`); the platform-agnostic **`tern-core`** crate is implemented and
-tested — auth/UCS client, WireGuard keygen, the state machine, backend traits, and the orchestration
-**engine** — with the whole flow driven end-to-end on any platform via a mock server + in-memory stub. Linux
-system integration (NetworkManager, GVfs), the GUI/tray, and packaging are next (see
-[`docs/06-build-plan.md`](docs/06-build-plan.md)). Baseline macOS-app fingerprint captured for **v4.1.1
-(build 177)** on 2026-07-30.
+Working vertical slice, built and compiled end-to-end (much of it on macOS, all of it green on Ubuntu CI):
+
+- **`tern-core`** — auth/UCS client, WireGuard keygen, state machine, backend traits, and the orchestration
+  **engine**; 24 tests incl. mock-HTTP round-trips and the full flow.
+- **`ternd`** — background service exposing the engine over a session-bus D-Bus API (+ live `Changed` signal).
+- **`tern-linux`** — NetworkManager/GVfs/keyring backends (via `nmcli`/`gio`/`secret-tool`).
+- **`tern`** (CLI) and **`tern-gui`** (GTK4 + libadwaita window **+ top-bar tray**) — thin D-Bus clients.
+- **Packaging** — systemd unit, D-Bus activation, desktop entry, AppStream metainfo, icon, Flatpak manifest,
+  and `packaging/install-local.sh`.
+
+Next (needs the Linux box / a real account): the browser+loopback SSO flow, runtime validation of the
+backends, and confirming the UCS wire shapes by capture — see [`docs/06-build-plan.md`](docs/06-build-plan.md)
+and [`docs/07-bazzite-bringup.md`](docs/07-bazzite-bringup.md). Baseline macOS-app fingerprint: **v4.1.1
+(build 177)**, 2026-07-30.
 
 ```sh
-cargo test -p tern-core                 # 23 tests, incl. HTTP round-trips + full engine flow
+cargo test -p tern-core                 # 24 tests, incl. HTTP round-trips + full engine flow
 cargo run -p tern-core --example flow   # watch sign-in → connect → selective auto-mount execute
+./packaging/install-local.sh            # (on Linux) build + install ternd/tern/tern-gui into ~/.local
 ```
 
 ## AI disclosure
