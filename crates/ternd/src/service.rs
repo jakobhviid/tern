@@ -5,23 +5,14 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
 use tern_core::engine::Engine;
-use tern_core::error::UserFacing;
+use tern_core::ipc::ActionResult;
 use tokio::sync::Mutex;
 use zbus::interface;
 use zbus::object_server::SignalEmitter;
 
 pub struct TernService {
     engine: Arc<Mutex<Engine>>,
-}
-
-/// The `{ok, error}` envelope returned by action methods.
-#[derive(Serialize)]
-struct ActionResult {
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<UserFacing>,
 }
 
 impl TernService {
@@ -42,8 +33,8 @@ impl TernService {
     /// Turn an engine result into the JSON envelope, and notify clients of the new state.
     async fn finish(&self, res: tern_core::Result<()>, emitter: &SignalEmitter<'_>) -> String {
         let out = match res {
-            Ok(()) => ActionResult { ok: true, error: None },
-            Err(e) => ActionResult { ok: false, error: Some(e.user_facing()) },
+            Ok(()) => ActionResult::ok(),
+            Err(e) => ActionResult::failed(e.user_facing()),
         };
         self.emit_changed(emitter).await;
         serde_json::to_string(&out).unwrap_or_else(|_| r#"{"ok":false}"#.to_string())
@@ -108,8 +99,7 @@ impl TernService {
             e.mount_selected().await;
         }
         self.emit_changed(&emitter).await;
-        serde_json::to_string(&ActionResult { ok: true, error: None })
-            .unwrap_or_else(|_| r#"{"ok":true}"#.to_string())
+        serde_json::to_string(&ActionResult::ok()).unwrap_or_else(|_| r#"{"ok":true}"#.to_string())
     }
 
     /// Emitted whenever state changes; carries the new [`Snapshot`] as JSON.
