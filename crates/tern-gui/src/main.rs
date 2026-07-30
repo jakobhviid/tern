@@ -350,7 +350,11 @@ fn build_ui(
     {
         let cmd_tx = cmd_tx.clone();
         let invite_row = invite_row.clone();
-        connect_btn.connect_clicked(move |_| {
+        // Immediate feedback: pairing + bringing the tunnel up can take a few seconds, so reflect it on the
+        // button right away rather than looking frozen until the daemon replies. render() resets it.
+        connect_btn.connect_clicked(move |btn| {
+            btn.set_label("Connecting…");
+            btn.set_sensitive(false);
             let _ = cmd_tx.try_send(Cmd::RedeemInvite(invite_row.text().to_string()));
         });
     }
@@ -382,6 +386,7 @@ fn build_ui(
     let app_loop = app.clone();
     let window_loop = window.clone();
     let cmd_tx_rows = cmd_tx.clone();
+    let invite_row_render = invite_row.clone();
     glib::spawn_future_local(async move {
         let mut prev_access: Option<Access> = None;
         let mut was_expired = false;
@@ -419,6 +424,13 @@ fn build_ui(
                     invite_group.set_visible(!show_main);
                     connect_btn.set_visible(!show_main);
                     import_btn.set_visible(!show_main);
+                    // Back on the onboarding view (first run or after a failed attempt): restore the Connect
+                    // button from its transient "Connecting…" state, re-enabled only for a valid invite.
+                    if !show_main {
+                        connect_btn.set_label("Connect");
+                        let text = invite_row_render.text();
+                        connect_btn.set_sensitive(!text.is_empty() && Invite::parse(text.as_str()).is_ok());
+                    }
                     console_group.set_visible(show_main);
                     access_group.set_visible(show_main);
                     drives_label.set_visible(show_main);
