@@ -34,17 +34,19 @@ async fn main() -> anyhow::Result<()> {
         let engine = engine.clone();
         tokio::spawn(async move {
             let mut e = engine.lock().await;
-            match e.restore_session().await {
-                Ok(true) => {
-                    tracing::info!("restored saved session");
-                    if e.config().connect_at_startup {
-                        if let Err(err) = e.connect("").await {
-                            tracing::warn!(error = %err, "connect-at-startup failed");
-                        }
+            // Restore whichever session is stored: the account SSO token and/or a redeemed Teleport session
+            // (ADR-0016). Either lets the Access toggle reconnect; `connect_at_startup` brings it up now.
+            let account = e.restore_session().await.unwrap_or(false);
+            let teleport = e.restore_teleport_session().await.unwrap_or(false);
+            if account || teleport {
+                tracing::info!(account, teleport, "restored saved session");
+                if e.config().connect_at_startup {
+                    if let Err(err) = e.connect("").await {
+                        tracing::warn!(error = %err, "connect-at-startup failed");
                     }
                 }
-                Ok(false) => tracing::info!("no saved session"),
-                Err(err) => tracing::warn!(error = %err, "restoring session failed"),
+            } else {
+                tracing::info!("no saved session");
             }
         });
     }
@@ -73,12 +75,12 @@ fn build_engine() -> Engine {
 
     #[cfg(target_os = "linux")]
     {
-        let (vpn, mounts, reach, secrets) = tern_linux::backends();
-        Engine::new(ucs, vpn, mounts, reach, secrets, config)
+        let (vpn, teleport, mounts, reach, secrets) = tern_linux::backends();
+        Engine::new(ucs, vpn, teleport, mounts, reach, secrets, config)
     }
     #[cfg(not(target_os = "linux"))]
     {
         let stub = Arc::new(tern_core::backend::StubBackend::new());
-        Engine::new(ucs, stub.clone(), stub.clone(), stub.clone(), stub, config)
+        Engine::new(ucs, stub.clone(), stub.clone(), stub.clone(), stub.clone(), stub, config)
     }
 }

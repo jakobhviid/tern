@@ -14,4 +14,4 @@ tern-core = { path = "../tern-core" }
 anyhow.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "process", "sync"] }

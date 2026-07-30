@@ -84,30 +84,15 @@ impl TernService {
     }
 
     /// Pair with a console using a Teleport invite (`teleport.ui.link/<uuid>`) and bring the tunnel up — the
-    /// consumer-account path (ADR-0016), replacing browser SSO. The invite is validated here; the broker
-    /// pairing + ICE nomination + userspace-WireGuard/TUN data plane (stages ③–⑥) are still being built, so a
-    /// *valid* invite currently reports that connecting isn't available yet (an invalid one reports why).
+    /// consumer-account path (ADR-0016), replacing browser SSO. Redeems the single-use invite into a reusable
+    /// session (persisted), then runs the userspace-WireGuard/TUN data plane. Invalid invites report why.
     async fn redeem_invite(
         &self,
         url: String,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> String {
-        match tern_core::teleport::Invite::parse(&url) {
-            // Invalid invite → the plain-language InvalidInvite message.
-            Err(e) => self.finish(Err(e), &emitter).await,
-            // Valid invite, but the tunnel engine (stages ③–⑥) isn't built yet — be honest, not cryptic.
-            Ok(_invite) => {
-                self.emit_changed(&emitter).await;
-                let uf = tern_core::error::UserFacing {
-                    title: "Invite accepted, but connecting isn't available yet — the tunnel is still being built."
-                        .to_string(),
-                    detail: None,
-                    action: tern_core::error::UserAction::None,
-                };
-                serde_json::to_string(&ActionResult::failed(uf))
-                    .unwrap_or_else(|_| r#"{"ok":false}"#.to_string())
-            }
-        }
+        let res = self.engine.lock().await.redeem_invite(&url).await;
+        self.finish(res, &emitter).await
     }
 
     /// Import a plain WireGuard `.conf` (the console's built-in WireGuard Server, or any peer) and bring it

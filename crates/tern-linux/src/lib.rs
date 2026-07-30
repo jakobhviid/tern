@@ -9,17 +9,19 @@
 
 use std::sync::Arc;
 
-use tern_core::backend::{MountBackend, Reachability, SecretStore, VpnBackend};
+use tern_core::backend::{MountBackend, Reachability, SecretStore, TeleportVpn, VpnBackend};
 
 pub mod cmd;
 pub mod gvfs;
 pub mod nm;
 pub mod reach;
 pub mod secret;
+pub mod teleport;
 
-/// The four backend seams the engine needs (VPN, mounts, reachability, secrets).
+/// The backend seams the engine needs (VPN, Teleport data plane, mounts, reachability, secrets).
 pub type Backends = (
     Arc<dyn VpnBackend>,
+    Arc<dyn TeleportVpn>,
     Arc<dyn MountBackend>,
     Arc<dyn Reachability>,
     Arc<dyn SecretStore>,
@@ -29,6 +31,7 @@ pub type Backends = (
 pub fn backends() -> Backends {
     (
         Arc::new(nm::NmVpn::new()),
+        Arc::new(teleport::TeleportVpnBackend::new()),
         Arc::new(gvfs::GvfsMounts::new()),
         Arc::new(reach::TcpReachability::new()),
         Arc::new(secret::KeyringSecrets::new()),
