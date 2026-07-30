@@ -1,0 +1,26 @@
+[package]
+name = "tern-gui"
+description = "GNOME-native (GTK4/libadwaita) GUI for the tern UniFi Identity client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "tern-gui"
+path = "src/main.rs"
+
+[dependencies]
+tern-core = { path = "../tern-core" }
+gtk = { package = "gtk4", version = "0.11", features = ["v4_10"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_4"] }
+zbus.workspace = true
+tokio.workspace = true
+async-channel = "2"
+futures-util = "0.3"
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
