@@ -23,7 +23,7 @@ zeroize.workspace = true
 x25519-dalek.workspace = true
 rand_core.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "time"] }
 reqwest.workspace = true
 url.workspace = true
 directories.workspace = true

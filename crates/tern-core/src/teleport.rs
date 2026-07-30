@@ -10,6 +10,8 @@
 //! invite; later stages add broker pairing (`cloudaccess.svc.ui.com/teleport`), ICE/STUN nomination, and the
 //! userspace-WireGuard data plane. Permissive crates only (ADR-0007): `boringtun`/`str0m`/`smoltcp`.
 
+use std::time::Duration;
+
 use base64::Engine as _;
 use serde::Deserialize;
 use sha2::{Digest, Sha512};
@@ -125,6 +127,80 @@ pub struct ServerInfo {
     pub tunnel_addr: String,
 }
 
+/// Client for the Teleport signaling broker ([`BROKER_BASE`]). Ports the reference client's transport:
+/// every call carries the invite-derived `?token=`, a `202 Accepted` / empty body means "still pending",
+/// and [`Broker::poll`] waits for a target `response_type`. The `connect` offer itself (client WireGuard key
+/// + gathered ICE candidates) is assembled by the ICE stage and passed as the request body.
+pub struct Broker {
+    http: reqwest::Client,
+    base: String,
+}
+
+impl Default for Broker {
+    fn default() -> Self {
+        Self { http: reqwest::Client::new(), base: BROKER_BASE.to_string() }
+    }
+}
+
+impl Broker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Point the broker at a custom base (used by tests).
+    pub fn with_base(base: impl Into<String>) -> Self {
+        Self { http: reqwest::Client::new(), base: base.into() }
+    }
+
+    /// One signaling request to `{base}{path}?token={token}` with an optional JSON body. A `202 Accepted`
+    /// or empty body yields a default (still-pending) [`BrokerResponse`], matching the reference client.
+    pub async fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        token: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<BrokerResponse> {
+        let mut req = self.http.request(method, format!("{}{}", self.base, path)).query(&[("token", token)]);
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        let resp = req.send().await.map_err(|e| Error::Http(e.to_string()))?;
+        let status = resp.status();
+        if status.is_client_error() || status.is_server_error() {
+            return Err(Error::Http(format!("teleport broker returned HTTP {}", status.as_u16())));
+        }
+        if status == reqwest::StatusCode::ACCEPTED {
+            return Ok(BrokerResponse::default());
+        }
+        let text = resp.text().await.map_err(|e| Error::Http(e.to_string()))?;
+        if text.trim().is_empty() {
+            return Ok(BrokerResponse::default());
+        }
+        serde_json::from_str(&text).map_err(|e| Error::Http(e.to_string()))
+    }
+
+    /// Poll `GET /{request_id}` every `interval` until a response's `response_type` equals `want`, up to
+    /// `max_tries` attempts. Returns `Ok(None)` if it never arrives in time.
+    pub async fn poll(
+        &self,
+        token: &str,
+        request_id: &str,
+        want: &str,
+        interval: Duration,
+        max_tries: u32,
+    ) -> Result<Option<BrokerResponse>> {
+        for _ in 0..max_tries {
+            tokio::time::sleep(interval).await;
+            let r = self.request(reqwest::Method::GET, &format!("/{request_id}"), token, None).await?;
+            if r.response_type == want {
+                return Ok(Some(r));
+            }
+        }
+        Ok(None)
+    }
+}
+
 fn invalid(input: &str) -> Error {
     Error::InvalidInvite(input.to_string())
 }
@@ -214,5 +290,52 @@ mod tests {
         assert_eq!(r.server_info.tunnel_mask, 32);
         assert_eq!(r.ice[0].urls, ["turn:turn.cloudflare.com:3478"]);
         assert_eq!(r.dns_addrs, ["192.168.1.1"]);
+    }
+
+    #[tokio::test]
+    async fn broker_request_sends_the_token_and_parses_the_body() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/connect"))
+            .and(query_param("token", "TOK"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "teleportRequestId": "req-1", "response_type": "SESSION_CREATED"
+            })))
+            .mount(&server)
+            .await;
+
+        let broker = Broker::with_base(server.uri());
+        let body = serde_json::json!({"request_type": "CONNECT"});
+        let r = broker
+            .request(reqwest::Method::POST, "/connect", "TOK", Some(&body))
+            .await
+            .unwrap();
+        assert_eq!(r.request_id, "req-1");
+        assert_eq!(r.response_type, "SESSION_CREATED");
+    }
+
+    #[tokio::test]
+    async fn broker_poll_returns_on_the_target_response_type() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/req-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "response_type": "CONNECT_RESPONSE", "server_info": {"wg_pub_key": "K"}
+            })))
+            .mount(&server)
+            .await;
+
+        let broker = Broker::with_base(server.uri());
+        let got = broker
+            .poll("TOK", "req-1", "CONNECT_RESPONSE", Duration::from_millis(1), 3)
+            .await
+            .unwrap();
+        assert_eq!(got.unwrap().server_info.wg_pub_key, "K");
     }
 }
