@@ -57,6 +57,26 @@ fn main() -> glib::ExitCode {
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "tern_gui=info".into()))
         .init();
 
+    // Deep-link entry point. We're launched as `tern-gui %u` and registered for the
+    // `x-scheme-handler/identity-standard` scheme (see the .desktop), so a UniFi Identity invite's
+    // "open in app" hands us a URI carrying the enrollment payload. Capture it before GTK touches argv:
+    // log it, and persist it to $XDG_RUNTIME_DIR/tern-deeplink.log so the sign-in flow (and bring-up
+    // debugging) can see exactly what UniFi passes.
+    for arg in std::env::args().skip(1) {
+        if arg.contains("://") {
+            tracing::info!(uri = %arg, "received deep-link invocation");
+            let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(format!("{dir}/tern-deeplink.log"))
+            {
+                use std::io::Write as _;
+                let _ = writeln!(f, "{arg}");
+            }
+        }
+    }
+
     let (cmd_tx, cmd_rx) = async_channel::unbounded::<Cmd>();
     let (update_tx, update_rx) = async_channel::unbounded::<Update>();
 
@@ -77,7 +97,10 @@ fn main() -> glib::ExitCode {
     app.connect_activate(move |app| {
         build_ui(app, cmd_tx.clone(), update_tx.clone(), update_rx.clone())
     });
-    app.run()
+    // Run with only the program name: we've already captured any deep-link URI above, and this
+    // GtkApplication uses default flags (no HANDLES_OPEN), which would otherwise error on a URI arg.
+    let prog = std::env::args().next().unwrap_or_default();
+    app.run_with_args(&[prog])
 }
 
 /// The background D-Bus actor: connects to `ternd`, pushes snapshots (initial + on every `Changed`), and runs
