@@ -7,7 +7,7 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::model::{Host, Identity, VpnSession};
+use crate::model::{Drive, Host, Identity, VpnSession};
 use crate::{Error, Result};
 
 /// Base hosts for the service. Defaults to production; tests/staging override.
@@ -46,6 +46,11 @@ impl UcsClient {
         self
     }
 
+    /// Replace the bearer token (after a fresh sign-in / reauth) or clear it (sign-out).
+    pub fn set_token(&mut self, token: Option<String>) {
+        self.bearer = token;
+    }
+
     // ---- endpoints (paths verbatim from the macOS binary) ----
 
     /// The signed-in identity: `GET /proxy/users/public/api/v2/identity/info`.
@@ -82,6 +87,20 @@ impl UcsClient {
         }
         let url = format!("{}/proxy/ucs/public/user/api/v1/vpn/session", self.endpoints.api_gw);
         self.post_json(&url, &Body { console_id, public_key }).await
+    }
+
+    /// List the user's UniFi Drive shares for a console.
+    ///
+    /// **UNCONFIRMED PATH.** The macOS binary exposes drive UI + `credential/import` routes but no clean
+    /// "list drives" endpoint was captured in static recon; this path is a best guess to be verified by a
+    /// traffic capture on the Linux box (see docs/02). The engine treats a failure here as "no drives yet",
+    /// so an eventual path correction is low-risk.
+    pub async fn drives(&self, console_id: &str) -> Result<Vec<Drive>> {
+        let url = format!(
+            "{}/proxy/ucs/public/user/api/v1/drive/list?consoleId={}",
+            self.endpoints.api_gw, console_id
+        );
+        self.get_json(&url).await
     }
 
     // ---- transport helpers ----
