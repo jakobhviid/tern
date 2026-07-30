@@ -92,13 +92,22 @@ impl TernService {
         url: String,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> String {
-        let res: tern_core::Result<()> = match tern_core::teleport::Invite::parse(&url) {
-            Ok(_invite) => Err(tern_core::Error::Other(anyhow::anyhow!(
-                "teleport pairing is not implemented yet (ADR-0016 stages 3-6)"
-            ))),
-            Err(e) => Err(e),
-        };
-        self.finish(res, &emitter).await
+        match tern_core::teleport::Invite::parse(&url) {
+            // Invalid invite → the plain-language InvalidInvite message.
+            Err(e) => self.finish(Err(e), &emitter).await,
+            // Valid invite, but the tunnel engine (stages ③–⑥) isn't built yet — be honest, not cryptic.
+            Ok(_invite) => {
+                self.emit_changed(&emitter).await;
+                let uf = tern_core::error::UserFacing {
+                    title: "Invite accepted, but connecting isn't available yet — the tunnel is still being built."
+                        .to_string(),
+                    detail: None,
+                    action: tern_core::error::UserAction::None,
+                };
+                serde_json::to_string(&ActionResult::failed(uf))
+                    .unwrap_or_else(|_| r#"{"ok":false}"#.to_string())
+            }
+        }
     }
 
     async fn sign_out(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) -> String {

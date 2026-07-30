@@ -10,7 +10,7 @@ use adw::prelude::*;
 use futures_util::StreamExt;
 use gtk::glib;
 use ksni::blocking::TrayMethods;
-use tern_core::ipc::APP_ID;
+use tern_core::ipc::{ActionResult, APP_ID};
 use tern_core::state::{Access, Auth, Snapshot};
 use tern_core::teleport::Invite;
 
@@ -31,6 +31,8 @@ enum Cmd {
 enum Update {
     Snapshot(Box<Snapshot>),
     Disconnected(String),
+    /// An action failed — show its plain-language message as an in-window toast.
+    Toast(String),
     /// Show the window (from the tray "Open").
     Present,
     /// Quit the app (from the tray "Quit").
@@ -141,7 +143,8 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
     }
 
     while let Ok(cmd) = cmd_rx.recv().await {
-        let _ = match cmd {
+        let is_refresh = matches!(cmd, Cmd::Refresh);
+        let result = match cmd {
             Cmd::RedeemInvite(url) => proxy.redeem_invite(&url).await,
             Cmd::Connect(id) => proxy.connect(&id).await,
             Cmd::Disconnect => proxy.disconnect().await,
@@ -149,6 +152,16 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
             Cmd::SetAutoMount(id, on) => proxy.set_auto_mount(&id, on).await,
             Cmd::Refresh => proxy.snapshot().await,
         };
+        // Surface an action failure to the user as a toast (Refresh returns a snapshot, not a result).
+        if !is_refresh {
+            if let Ok(json) = &result {
+                if let Ok(ActionResult { ok: false, error: Some(uf) }) =
+                    serde_json::from_str::<ActionResult>(json)
+                {
+                    let _ = update_tx.send(Update::Toast(uf.title)).await;
+                }
+            }
+        }
         push_snapshot(&proxy, &update_tx).await;
     }
 }
@@ -233,7 +246,10 @@ fn build_ui(
     content.append(&actions);
 
     toolbar.set_content(Some(&content));
-    window.set_content(Some(&toolbar));
+    // An AdwToastOverlay carries transient, plain-language feedback for action results (docs/09).
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&toolbar));
+    window.set_content(Some(&toast_overlay));
 
     // Tray icon (StatusNotifierItem). Optional: absent SNI host / no session bus → run without it.
     let tray = TernTray {
@@ -301,6 +317,7 @@ fn build_ui(
             match update {
                 Update::Present => window_loop.present(),
                 Update::Quit => app_loop.quit(),
+                Update::Toast(msg) => toast_overlay.add_toast(adw::Toast::new(&msg)),
                 Update::Disconnected(reason) => {
                     summary.set_text("Background service not running");
                     for w in [
@@ -374,14 +391,18 @@ fn build_ui(
                         notify("Session expired", "Sign in again to stay connected.");
                     }
                     was_expired = expired;
+                    // Desktop notifications (freedesktop / KDE) for every meaningful Access transition.
+                    // Kept deliberately, overriding the design's "quiet by default" (owner request).
                     if let Some(prev) = prev_access {
                         if snap.access != prev {
                             match snap.access {
+                                Access::On => notify("Connected", "You can reach your network."),
+                                Access::Off => notify("Disconnected", "Access is off."),
                                 Access::Degraded => notify("Access isn't working", "Reconnecting may help."),
                                 Access::Unreachable => {
                                     notify("Can't reach your network", "Try again in a moment.")
                                 }
-                                _ => {}
+                                Access::TurningOn => {}
                             }
                         }
                     }
