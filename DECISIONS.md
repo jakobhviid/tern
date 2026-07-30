@@ -229,7 +229,7 @@ session bus; `tern status` and the GUI both render "Not signed in"; the GUI no l
 **Revisit if:** the owner renames the product (grep `phd.hviid.Tern`); if a future single-binary/monolith mode
 (ADR-0002 fallback) runs the engine inside the GUI process, the split is moot (one process owns the app-id).
 
-## ADR-0016 — VPN data plane: port Teleport (userspace WireGuard over ICE/TURN) to Rust 🟡
+## ADR-0016 — VPN data plane: port Teleport (userspace WireGuard over ICE/TURN) to Rust 🟢
 **Context:** The live capture (doc 08) settled how One-Click actually works: it is **Teleport-shaped** — no
 dialable endpoint, a coordination call returns **TURN creds + a `directAccessDomain`**, and the tunnel is
 **userspace WireGuard carried over ICE/WebRTC** (direct when reachable, Cloudflare-TURN-relayed when NAT'd).
@@ -254,11 +254,14 @@ cloud creds → ③ signaling (MQTT+HTTPS, key + ICE-candidate exchange) → ④
 **Why:** The discovery risk is gone (two references document the wire format); what remains is a bounded port with
 permissive crates that keeps us MIT. It delivers the *actual* flow (tern's whole reason to exist), not a
 hand-rolled `.conf` wrapper.
-**Confidence / gate 🟡:** the owner's account was captured on the *newer* chain (doc 08), while the references
-implement the *older* Teleport chain. **Before the big port, validate `telepy-cli` connects to the owner's
-console today.** If yes → port it wholesale. If the old chain is retired for the account → port telepy's **data
-plane** but take the **control plane** from doc 08 (client-side-probe the one gap: how the `Identity-Hub` JWT is
-minted). Either way the data-plane port is the same work.
+**Confidence / gate — VALIDATED 2026-07-30 🟢:** the gate is passed. telepy's SSO-**directory** path is empty for
+this account (newer backend), but the **Go client `sinnet3000/teleport-client` connects end-to-end via a
+`teleport.ui.link` invite** — paired → ICE/STUN nominated → userspace WireGuard handshake → real LAN traffic
+(HTTP 200 from the console through its SOCKS proxy). So the **reference to port is the Go client** (not telepy) and
+the **entry point is a Teleport invite** (broker `cloudaccess.svc.ui.com/teleport`), not the SSO directory. The
+Go stack (`wireguard-go`+`pion/stun`+`gvisor`, all permissive) confirms the Rust crate choices. The newer
+Identity-Hub/`remote-credentials` chain (doc 08) is **parked** — unneeded. *Caveat:* validated on-LAN (direct ICE
+candidate); off-LAN reflexive/TURN nomination is the same code path but not yet exercised.
 **Revisit if:** Ubiquiti fully retires the Teleport/MQTT signaling for consumer accounts (then only the doc-08
 chain remains — port data plane, RE the control plane), or a directly-dialable path (ADR-0004 fallback) turns out
 to cover the owner's real need (then this large port may be unnecessary for *this* user).

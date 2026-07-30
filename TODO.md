@@ -20,31 +20,45 @@ ICE/STUN(+TURN) inside `ternd` — permissive crates only (`boringtun`/`wireguar
 already validated; ADR-0009 revised). This makes ADR-0004 (NetworkManager) a **fallback** for the directly-dialable
 case only.
 
-**⚠️ Gate before the big port (do this FIRST):** the owner's account was captured on the *newer* chain (doc 08),
-but the references implement the *older* Teleport chain — so **validate that `telepy-cli` actually connects to the
-owner's console today.** Run it with the owner's creds (owner types password/TOTP). Outcome:
-- **connects** → port telepy wholesale (control + data plane).
-- **doesn't** → port telepy's **data plane**, take the **control plane** from doc 08 (client-side-probe the one
-  gap: how the `Identity-Hub` JWT is minted, using the working `UBIC_AUTH` session).
+**✅ Gate — VALIDATED 2026-07-30 (GREEN), reference chosen.** telepy's SSO-**directory** path is a dead end for
+this account (`ls` empty — the console lives on the newer backend, not legacy `sd-wan/hosts`). **But the Go client
+`sinnet3000/teleport-client` connects end-to-end via a `teleport.ui.link/<UUID>` invite:** paired → ICE/STUN
+nominated → userspace WireGuard handshake completed → **`curl` through its SOCKS proxy returned HTTP 200 from the
+LAN console** (`192.168.1.1` and `192.168.60.1`). So:
+- **Entry point = a Teleport invite** (`teleport.ui.link/<UUID>`, generated in the console's Teleport settings),
+  **not** the SSO directory. It pairs against the broker `cloudaccess.svc.ui.com/teleport`, saves a reusable
+  session, and the invite is single-use.
+- **Reference to port = the Go client** (`sinnet3000/teleport-client`), **not** telepy. Stack `wireguard-go` +
+  `pion/stun` + `gvisor` (all permissive) → Rust `boringtun` + `str0m` + `smoltcp`.
+- **Caveat:** validated from *on* the LAN (ICE chose a direct candidate `192.168.60.1`); a true off-LAN run would
+  exercise the reflexive (`<console-WAN-IP>`) / TURN candidates — same code path, not yet tested remotely.
+- The newer Identity-Hub/`remote-credentials` chain (doc 08) is now **parked** — the invite/Teleport path works and
+  is fully RE'd, so we don't need it.
 
 **Where to work: Bazzite (here).** The Mac's value (real app + capture) is spent; everything left is Linux-runtime
 and portable Rust — buildable/testable here (and `tern-core` builds on macOS too if needed).
 
-### Bazzite work queue (in order — ADR-0016 build stages)
-1. **Validate the reference** — clone `telepy-cli`, run end-to-end with the owner's creds; confirm a tunnel comes up
-   and a LAN host is reachable. (Go/no-go for a clean port vs port+patch.)
-2. **Port stage ① auth** — `tern-core`: SSO login (`api/sso/v1/login` + TOTP → `UBIC_AUTH`), already validated;
-   turn the throwaway probe into real code + keyring storage.
-3. **Port stage ② directory / cloud creds** — console directory + short-lived creds (SigV4 for the old chain, or the
-   doc-08 `user-token`→`remote-credentials` chain).
-4. **Port stage ③ signaling** — MQTT (AWS IoT) + HTTPS: exchange WG keys + ICE candidates.
-5. **Port stage ④ ICE/STUN(+TURN)** — `str0m`/`webrtc-rs`; establish the transport (direct or Cloudflare-TURN relay).
-6. **Port stage ⑤ userspace WireGuard + netstack** — `boringtun` + `smoltcp` (or TUN); route selected subnets.
-7. **Integrate** — wire the engine to `ternd` `Connect`/`Disconnect`, the GUI toggle + tray state, then drives
-   (`gvfs.rs`, SMB over the tunnel, creds from keyring). Much of this scaffolding already exists.
+### Bazzite work queue (in order — ADR-0016 build stages; port from the **Go client**)
+1. **✅ Validate the reference** — DONE (Go client connects end-to-end via a `teleport.ui.link` invite; see the gate
+   above). A pre-built copy for reference/A-B testing: `/tmp/tpgo` (rebuild: `git clone …/sinnet3000/teleport-client`).
+2. **Port stage ① invite pairing** — `tern-core`: redeem a `teleport.ui.link/<UUID>` invite against the broker
+   `cloudaccess.svc.ui.com/teleport` — POST connect, poll for `CONNECT_RESPONSE`, receive peer candidates; persist
+   the reusable session (keyring). *Ref: Go `api.go`, `session.go`.* (No SSO login needed on this path — the invite
+   is the capability.)
+3. **Port stage ② ICE/STUN nomination** — probe candidates, per-tuple nomination, select the endpoint (direct or
+   TURN-relayed via `-turn`). *Ref: Go `stun.go`, `nomination.go`; Rust `str0m` (or `pion`-equivalent).*
+4. **Port stage ③ userspace WireGuard + netstack** — WG over the nominated UDP tuple; expose a TUN (system-wide)
+   and/or SOCKS5 (no-admin). *Ref: Go `wireguard.go`, `tunnel.go`, `socks5.go`; Rust `boringtun` + `smoltcp`.*
+5. **Integrate** — wire the engine into `ternd` `Connect`/`Disconnect`, the GUI toggle + tray state; then drives
+   (`gvfs.rs`, SMB over the tunnel, creds from keyring). Much scaffolding already exists.
+6. **Invite-input UX** — how the user supplies the `teleport.ui.link` invite (paste in the GUI / `tern login
+   --invite <url>`). The console generates it in **Settings → VPN → Teleport**; it's **single-use** (save the
+   session, don't reuse the invite).
+7. **(Later) off-LAN validation** — run from a remote network to confirm the reflexive/TURN candidates nominate and
+   the relayed path works (the on-LAN test only exercised the direct candidate).
 
-**Fallback (if the port stalls or the owner just wants reachability):** the console's built-in **WireGuard Server**
-→ export `.conf` → `tern-linux/src/nm.rs` (NetworkManager). Works today; explicitly *not* the product.
+**Fallback (only if needed):** the console's built-in **WireGuard Server** → export `.conf` → `tern-linux/src/nm.rs`
+(NetworkManager). Now lower priority since the Teleport invite path is validated; keep as the direct-dial option.
 
 _Mac cleanup done: mitmproxy + its CA removed, system proxy off, captured traffic (secrets) discarded — none of it
 ever entered the repo._
