@@ -21,6 +21,7 @@ enum Cmd {
     Connect(String),
     Disconnect,
     SignOut,
+    SetAutoMount(String, bool),
     Refresh,
 }
 
@@ -44,6 +45,7 @@ trait Tern {
     async fn connect(&self, console_id: &str) -> zbus::Result<String>;
     async fn disconnect(&self) -> zbus::Result<String>;
     async fn sign_out(&self) -> zbus::Result<String>;
+    async fn set_auto_mount(&self, drive_id: &str, on: bool) -> zbus::Result<String>;
     #[zbus(signal)]
     async fn changed(&self, snapshot_json: String) -> zbus::Result<()>;
 }
@@ -114,6 +116,7 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
             Cmd::Connect(id) => proxy.connect(&id).await,
             Cmd::Disconnect => proxy.disconnect().await,
             Cmd::SignOut => proxy.sign_out().await,
+            Cmd::SetAutoMount(id, on) => proxy.set_auto_mount(&id, on).await,
             Cmd::Refresh => proxy.snapshot().await,
         };
         push_snapshot(&proxy, &update_tx).await;
@@ -218,6 +221,7 @@ fn build_ui(
 
     let app_loop = app.clone();
     let window_loop = window.clone();
+    let cmd_tx_rows = cmd_tx.clone();
     glib::spawn_future_local(async move {
         while let Ok(update) = update_rx.recv().await {
             match update {
@@ -250,6 +254,18 @@ fn build_ui(
                             .title(&d.drive.name)
                             .subtitle(d.state.label())
                             .build();
+                        // Auto-mount toggle. set_active BEFORE connecting so the programmatic set doesn't
+                        // fire as a user action (and echo back a redundant command).
+                        let sw = gtk::Switch::new();
+                        sw.set_valign(gtk::Align::Center);
+                        sw.set_active(d.selected);
+                        let cmd_tx = cmd_tx_rows.clone();
+                        let id = d.drive.id.clone();
+                        sw.connect_state_set(move |_, state| {
+                            let _ = cmd_tx.try_send(Cmd::SetAutoMount(id.clone(), state));
+                            glib::Propagation::Proceed
+                        });
+                        row.add_suffix(&sw);
                         drives_list.append(&row);
                     }
 

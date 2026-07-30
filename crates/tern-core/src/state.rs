@@ -60,11 +60,13 @@ impl DriveMount {
     }
 }
 
-/// A drive plus its current mount state.
+/// A drive plus its current mount state and whether it's selected for auto-mount.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DriveStatus {
     pub drive: Drive,
     pub state: DriveMount,
+    /// Whether the user has ticked this drive to auto-mount.
+    pub selected: bool,
 }
 
 /// The overall tray/menu-bar visual state (docs/05 §5) — kept to a handful a person can read at a glance.
@@ -148,6 +150,7 @@ mod tests {
         DriveStatus {
             drive: Drive { id: name.into(), name: name.into(), share: None, encrypted: false },
             state,
+            selected: false,
         }
     }
 

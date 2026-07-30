@@ -200,7 +200,7 @@ impl Engine {
                 } else {
                     DriveMount::Idle
                 };
-                DriveStatus { drive: d.clone(), state }
+                DriveStatus { drive: d.clone(), state, selected }
             })
             .collect();
         Snapshot { auth: self.auth.clone(), access: self.access, drives }
