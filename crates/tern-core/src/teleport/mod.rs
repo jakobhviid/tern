@@ -21,6 +21,7 @@ use crate::model::WireguardConfig;
 use crate::wg::KeyPair;
 use crate::{Error, Result};
 
+pub mod ice;
 pub mod stun;
 
 /// Host a Teleport invite URL must use, so a stray link can't send us pairing somewhere else.
