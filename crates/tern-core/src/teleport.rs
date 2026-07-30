@@ -16,6 +16,8 @@ use base64::Engine as _;
 use serde::Deserialize;
 use sha2::{Digest, Sha512};
 
+use crate::model::WireguardConfig;
+use crate::wg::KeyPair;
 use crate::{Error, Result};
 
 /// Host a Teleport invite URL must use, so a stray link can't send us pairing somewhere else.
@@ -99,6 +101,32 @@ pub struct BrokerResponse {
     pub client_ip: String,
     #[serde(rename = "dns_addrs", default)]
     pub dns_addrs: Vec<String>,
+}
+
+impl BrokerResponse {
+    /// Bridge a `CONNECT_RESPONSE` into a [`WireguardConfig`]: the console's key + the tunnel address/DNS it
+    /// assigned us, our device key, and the ICE-nominated `endpoint` (`host:port`). AllowedIPs defaults to
+    /// full-tunnel and keepalive to 25s (what Teleport uses); the client tunnel address is a `/32` when the
+    /// broker doesn't state a mask. This is the hand-off from signaling to the data plane.
+    pub fn to_wireguard_config(&self, keypair: &KeyPair, endpoint: &str) -> WireguardConfig {
+        let si = &self.server_info;
+        let address = if si.tunnel_addr.is_empty() {
+            Vec::new()
+        } else {
+            let mask = if si.tunnel_mask == 0 { 32 } else { si.tunnel_mask };
+            vec![format!("{}/{}", si.tunnel_addr, mask)]
+        };
+        WireguardConfig {
+            server_public_key: si.wg_pub_key.clone(),
+            endpoint: endpoint.to_string(),
+            allowed_ips: vec!["0.0.0.0/0".into(), "::/0".into()],
+            preshared_key: None,
+            persistent_keepalive: Some(25),
+            address,
+            dns: self.dns_addrs.clone(),
+            client_private_key: Some(keypair.private.clone()),
+        }
+    }
 }
 
 /// A STUN/TURN server from the broker's `ice_configuration`.
@@ -337,5 +365,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(got.unwrap().server_info.wg_pub_key, "K");
+    }
+
+    #[test]
+    fn builds_a_wireguard_config_from_a_connect_response() {
+        let mut resp = BrokerResponse { response_type: "CONNECT_RESPONSE".into(), ..Default::default() };
+        resp.server_info.wg_pub_key = "SRVKEY".into();
+        resp.server_info.tunnel_addr = "192.168.2.7".into();
+        resp.server_info.tunnel_mask = 32;
+        resp.dns_addrs = vec!["192.168.1.1".into()];
+
+        let kp = crate::wg::generate_keypair();
+        let cfg = resp.to_wireguard_config(&kp, "192.168.60.1:54313");
+
+        assert_eq!(cfg.server_public_key, "SRVKEY");
+        assert_eq!(cfg.endpoint, "192.168.60.1:54313");
+        assert_eq!(cfg.address, ["192.168.2.7/32"]);
+        assert_eq!(cfg.dns, ["192.168.1.1"]);
+        assert!(cfg.is_full_tunnel());
+
+        // Renders the same shape the reference client produced end-to-end.
+        let conf = cfg.to_wg_quick().unwrap();
+        assert!(conf.contains("PublicKey = SRVKEY"));
+        assert!(conf.contains("Endpoint = 192.168.60.1:54313"));
+        assert!(conf.contains("Address = 192.168.2.7/32"));
+        assert!(conf.contains("PersistentKeepalive = 25"));
+        assert!(conf.contains(&format!("PrivateKey = {}", kp.private)));
     }
 }
