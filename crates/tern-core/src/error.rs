@@ -31,6 +31,10 @@ pub enum UserAction {
     UnlockKeyring,
     /// Open a help/support page.
     HelpLink,
+    /// Get a fresh single-use invite from the console.
+    GetNewInvite,
+    /// Grant the one-time permission needed to set up the connection.
+    GrantPermission,
 }
 
 impl UserAction {
@@ -48,6 +52,8 @@ impl UserAction {
             UserAction::EnterCredentials => "Enter credentials",
             UserAction::UnlockKeyring => "Unlock",
             UserAction::HelpLink => "Help",
+            UserAction::GetNewInvite => "Get a new invite",
+            UserAction::GrantPermission => "Continue",
         }
     }
 }
@@ -92,6 +98,12 @@ pub enum Error {
     /// The pasted Teleport invite link/code isn't a valid invite.
     #[error("invalid teleport invite: {0}")]
     InvalidInvite(String),
+    /// The Teleport invite has already been used (invites are single-use).
+    #[error("teleport invite already used")]
+    InviteAlreadyUsed,
+    /// A one-time permission is needed to bring up the system-wide connection (TUN device).
+    #[error("privilege required to set up the connection")]
+    PrivilegeRequired,
 
     // ---- VPN / access ----
     #[error("no console available for this account")]
@@ -166,6 +178,14 @@ impl Error {
             InvalidInvite(_) => UserFacing::new(
                 "That invite link doesn't look right. Copy it again from your console.",
                 A::Retry,
+            ),
+            InviteAlreadyUsed => UserFacing::new(
+                "This invite has already been used. Get a new one from your console.",
+                A::GetNewInvite,
+            ),
+            PrivilegeRequired => UserFacing::new(
+                "tern needs your permission to set up the connection.",
+                A::GrantPermission,
             ),
             NoConsoleAvailable => UserFacing::new(
                 "Your network isn't available right now. Try again in a moment.",
@@ -253,6 +273,8 @@ mod tests {
             Error::Offline,
             Error::Http("500 Internal Server Error".into()),
             Error::InvalidInvite("https://teleport.ui.link/not-a-uuid".into()),
+            Error::InviteAlreadyUsed,
+            Error::PrivilegeRequired,
         ];
         // Whole words we must never leak into a user-facing title (docs/05 anti-patterns). Matched
         // per-token so a term like "ice" doesn't false-positive inside "service".
