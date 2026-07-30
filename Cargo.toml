@@ -32,6 +32,8 @@ base64 = "0.22"
 sha2 = "0.10"
 scrypt = { version = "0.11", default-features = false }
 if-addrs = "0.13"
+hmac = "0.12"
+sha1 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 directories = "5"
 # WireGuard key material (X25519) — permissive (BSD/MIT), no OpenSSL.
