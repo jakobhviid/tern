@@ -9,12 +9,19 @@ being built on macOS but targets Linux/GNOME (Bazzite) — some layers can be pr
 |---|---|---|---|
 | M0 | Research: teardown, protocol, licensing, UX (docs/) | ✅ done | — |
 | M1 | `tern-core`: models, errors→UX, state machine, wg keys, UCS client, backends, **engine** | ✅ done | macOS/CI (mock UCS + stub) |
-| M2 | `tern-cli`: control client + offline render; clap (json/man/completions/llm) | ⏳ next | macOS (render); Linux (daemon IPC) |
-| M3 | `ternd`: background service + D-Bus API; session persistence, auto-reconnect | ⏳ | builds macOS; runs Linux |
-| M4 | `tern-linux`: NetworkManager (zbus), GVfs mount, libsecret backends | ⏳ | Bazzite only |
-| M5 | `tern-gui`: relm4 + libadwaita panels + ksni tray | ⏳ | GUI: macOS via brew gtk4; tray: Linux |
-| M6 | Packaging: Flatpak manifest (primary), rpm/deb, CLI tap bottle; release CI | ⏳ | Linux/CI |
-| M7 | Real-account validation: traffic capture confirms UCS shapes; wire live auth | ⏳ | Bazzite + owner creds |
+| M2 | `tern-cli`: control client, clap (json/man/completions/llm) | ✅ done | macOS (help/man/completions/llm); Linux (IPC) |
+| M3 | `ternd`: session-bus D-Bus service wrapping the engine (+ Changed signal) | ✅ built | builds+clippy on macOS; runs on Linux |
+| M4 | `tern-linux`: NetworkManager/GVfs/keyring backends via CLIs (nmcli/gio/secret-tool) | ✅ built | compiles on macOS; runs on Bazzite. D-Bus port needed for Flatpak (ADR-0014) |
+| M5 | `tern-gui`: GTK4/libadwaita window + live D-Bus updates | 🟡 window built | **compiled+linked against real gtk4 on macOS**; `ksni` tray pending (Bazzite) |
+| M6 | Packaging: systemd unit, D-Bus activation, desktop, AppStream, icon, Flatpak manifest | 🟡 scaffolded | offline cargo-sources + release CI + tap template pending (Linux/CI) |
+| M7 | Real-account validation: traffic capture → confirm UCS shapes; browser+loopback auth | ⏳ | Bazzite + owner creds |
+
+### Remaining before "usable on Bazzite"
+- **ksni tray** (M5) — the top-bar icon; needs a real SNI host to verify.
+- **Browser+loopback SSO** (ADR-0009) — replace the `CompleteSignIn(token)` placeholder with the real flow
+  (passkey-capable). Exact OAuth params need the M7 capture.
+- **Runtime bring-up on Bazzite** — build from source, `systemctl --user enable --now tern.service`, run the GUI,
+  and iterate the nmcli/gio/secret-tool backends against the real system.
 
 ## What's proven on the Mac right now (M1)
 
