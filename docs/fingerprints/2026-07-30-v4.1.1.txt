@@ -1,0 +1,293 @@
+UniFi Endpoint — fingerprint
+generated: 2026-07-30T10:19:36Z (UTC)
+app path:  /Applications/UniFi Endpoint.app
+
+===== VERSION / IDENTITY =====
+CFBundleShortVersionString : 4.1.1
+CFBundleVersion            : 177
+CFBundleIdentifier         : com.ui.uid.standard-desktop
+LSMinimumSystemVersion     : 13.0
+DTSDKName                  : macosx26.2
+LSUIElement                : true
+URL schemes                : identity-standard
+Bonjour services           : _bonjour._tcp _lnp._tcp
+
+===== CODE SIGNATURE =====
+Identifier=com.ui.uid.standard-desktop
+Format=app bundle with Mach-O universal (x86_64 arm64)
+Authority=Developer ID Application: Ubiquiti Inc. (4P645293E8)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=4P645293E8
+
+===== ENTITLEMENTS (sorted keys) =====
+com.apple.application-identifier
+com.apple.developer.associated-domains
+com.apple.developer.networking.multicast
+com.apple.developer.networking.networkextension
+com.apple.developer.system-extension.install
+com.apple.developer.team-identifier
+com.apple.security.application-groups
+com.apple.security.personal-information.location
+
+===== LINKED SYSTEM FRAMEWORKS (names only, sorted) =====
+/System/Library/Frameworks/Accelerate.framework
+/System/Library/Frameworks/AppKit.framework
+/System/Library/Frameworks/ApplicationServices.framework
+/System/Library/Frameworks/Carbon.framework
+/System/Library/Frameworks/CFNetwork.framework
+/System/Library/Frameworks/Combine.framework
+/System/Library/Frameworks/CoreFoundation.framework
+/System/Library/Frameworks/CoreGraphics.framework
+/System/Library/Frameworks/CoreLocation.framework
+/System/Library/Frameworks/CoreMedia.framework
+/System/Library/Frameworks/CoreServices.framework
+/System/Library/Frameworks/CoreTelephony.framework
+/System/Library/Frameworks/CoreText.framework
+/System/Library/Frameworks/CoreWLAN.framework
+/System/Library/Frameworks/CryptoKit.framework
+/System/Library/Frameworks/Foundation.framework
+/System/Library/Frameworks/IOKit.framework
+/System/Library/Frameworks/LocalAuthentication.framework
+/System/Library/Frameworks/Metal.framework
+/System/Library/Frameworks/NetFS.framework
+/System/Library/Frameworks/Network.framework
+/System/Library/Frameworks/NetworkExtension.framework
+/System/Library/Frameworks/QuartzCore.framework
+/System/Library/Frameworks/ScreenCaptureKit.framework
+/System/Library/Frameworks/Security.framework
+/System/Library/Frameworks/ServiceManagement.framework
+/System/Library/Frameworks/StoreKit.framework
+/System/Library/Frameworks/SwiftUI.framework
+/System/Library/Frameworks/SystemConfiguration.framework
+/System/Library/Frameworks/SystemExtensions.framework
+/System/Library/Frameworks/UserNotifications.framework
+
+===== BUNDLED FRAMEWORKS (sorted) =====
+AFNetworking.framework
+AWSAPIGateway.framework
+AWSCore.framework
+AWSIoT.framework
+CocoaAsyncSocket.framework
+FBLPromises.framework
+FirebaseCore.framework
+FirebaseCoreExtension.framework
+FirebaseCoreInternal.framework
+FirebaseCrashlytics.framework
+FirebaseInstallations.framework
+FirebaseRemoteConfigInterop.framework
+FirebaseSessions.framework
+GoogleDataTransport.framework
+GoogleUtilities.framework
+Keys.framework
+Kingfisher.framework
+nanopb.framework
+Promises.framework
+Reachability.framework
+RxCocoa.framework
+RxRelay.framework
+RxSwift.framework
+WebRTC.framework
+
+===== SYSTEM EXTENSIONS =====
+com.ui.uid.standard-desktop.network-extension.systemextension
+  provider: com.apple.networkextension.packet-tunnel = com_ui_uid_standard_desktop_network_extension.PacketTunnelProvider
+
+===== XPC SERVICES =====
+com.ui.uid.standard-desktop.agent.xpc
+
+===== TUNNEL / DRIVE / CLOUD ENGINE MARKERS (presence) =====
+  sagernet/wireguard-go                      present
+  sagernet/sing (sing-box)                   present
+  unifi-tunnel/ (UI Go wrapper)              present
+  sing-box BoxService                        present
+  gVisor netstack (pkg/tcpip)                present
+  WireGuardOutboundOptions                   present
+  NetFSMountCoordinator                      present
+  FileAccessSMBViewModel                     present
+  CloudAccessClient                          present
+  NcaSignalingTransport (WebRTC)             present
+  smb:// scheme                              present
+
+===== ENDPOINTS (ui.com / ubnt.com hosts, sorted unique) =====
+https://account.ui.com
+https://account.ui.com/manage
+https://api-gw.uid.alpha.ui.com
+https://api-gw.uid.df.ui.com
+https://cloudaccess.dev.svc.ui.com
+https://cloudaccess.stg.svc.ui.com
+https://cloudaccess.svc.ui.com
+https://config.ubnt.com
+https://dev-config.ubnt.com
+https://develop.unifi.dev.ui.com
+https://develop.unifi.stg.ui.com
+https://enterprise.dev.svc.ui.com
+https://enterprise.stg.svc.ui.com
+https://enterprise.svc.ui.com
+https://feedback.svc.ui.com
+https://fw-update.ubnt.com
+https://help.ui.com/hc/en-us/articles/27900437407895-Troubleshooting-Identity-One-Click-VPN
+https://help.ui.com/hc/en-us/articles/33979292652951
+https://sso.dev.ui.com
+https://sso.stg.ui.com
+https://sso.ui.com
+https://stg-config.ubnt.com
+https://stg-fw-update.ubnt.com
+https://unifi.ui.com
+https://www.ui.com/legal/privacypolicy/
+https://www.ui.com/legal/services-terms/
+https://www.ui.com/legal/termsofservice/
+
+===== API PATHS (auth / ucs-vpn / identity / credential, sorted unique) =====
+/api/auth/login/poll
+/api/oauth/token
+/api/sso/login/mfa/send
+/api/sso/v1/jwt/token/login
+/api/sso/v1/legal
+/api/sso/v1/login
+/api/sso/v1/login/2fa
+/api/sso/v1/login/start
+/api/sso/v1/login/token/poll
+/api/sso/v1/login/token/setup
+/api/sso/v1/password/
+/api/sso/v1/search/email/
+/api/sso/v1/search/username/
+/api/sso/v1/user
+/api/sso/v1/user/generator
+/api/sso/v1/user/self
+/api/sso/v1/user/self/2fa/reset
+/api/sso/v1/user/self/mfa/email/
+/api/sso/v1/user/self/mfa/push/poll-login
+/api/sso/v1/user/self/mfa/push/send
+/api/sso/v1/user/self/mfa/sms/
+/api/v1/credential/private-key
+/api/v2/credential/confirm
+/api/v2/credential/device
+/api/v2/credential/download
+/api/v2/identity/info
+/api/v2/identity/public_key
+/api/v2/identity/public_key?token=
+/proxy/ucs/public/user/api/v1/auth/login
+/proxy/ucs/public/user/api/v1/credential/
+/proxy/ucs/public/user/api/v1/vpn/session
+/proxy/ucs/public/user/api/v1/vpn/session/
+/proxy/ucs/public/user/api/v1/vpn/session/status
+/proxy/users/api
+/proxy/users/network
+/proxy/users/public/api/v2/identity/info
+/proxy/users/public/api/v2/identity/public_key
+/sso/identity_provider/url
+/sso/identity_providers
+/standard/api/v2/public/credential/import
+/user-token/hosts/
+
+===== FEATURE STRINGS (en.lproj, curated, sorted unique) =====
+%@ encrypted drives are locked and can be unlocked by the admin in the Drive Portal.
+%d drives
+1. Open the invitation email or link sent by your admin.
+2. Open the hyperlink or enter the Organization domain to sign in.
+2. Tap Get Started to sign in.
+Access to advanced management options like snapshot.
+Admin Access
+Admin Name
+Admin Role
+Administrator
+Advanced management options
+All Sites
+An encrypted drive is locked and can be unlocked by the admin in the Drive Portal.
+Auto Connect to WiFi When Device Is Active
+Auto Drive Integration
+Auto Integrate Drive to Finder
+Connect to VPN at UniFi Endpoint Startup
+Contact your admin for more information.
+Disconnect &amp; Switch Site
+Disconnect %@ &amp; Switch Site
+Enable Auto Integrate Drive to Finder
+Enabling Auto Integrate Drive to Finder...
+Failed to Load VPN
+If you are unable to connect to this WiFi, please contact your admin for more information.
+Invalid identity provider. Contact your admin for assistance.
+Invalid One-Click WiFi credentials.
+Local Network Connected, %@ Not Mounted
+Manage sites and settings
+Mount All Drives
+Notify IT Admin
+One-Click VPN
+One-Click WiFi
+One-Click WiFi Connection Failed
+One-Click WiFi signal was not found.
+Open Drive Portal
+Open Finder
+Open Finder to See UniFi Drive Files
+Open UniFi Drive in Browser
+Open UniFi Drive Sync Settings
+Please ask your admin to send you a new invitation email.
+Please change your password and try signing in again.
+Please contact your admin for a new credential.
+Please contact your admin for assistance.
+Please open your invitation email or link and try signing in again.
+Please try again or contact your administrator.
+Preparing to sign in...
+Reauthenticate
+Reauthenticate – Session Expires at %@
+Reauthenticate to keep your session active.
+Reauthenticate to keep your VPN session active.
+Reauthenticate to stay connected and keep your traffic protected.
+Select Source to Share
+Session timed out. Reauthenticate to continue.
+Share
+Shared Window
+Sign in
+Sign In
+Sign in again to stay connected and keep your traffic protected.
+Sign in to connect to VPN
+Sign in to start a VPN session and keep your traffic protected.
+Sign In to Your Organization
+Sign in to your organization using the domain attached in the invitation email.
+Sign in with your web browser
+Sign Out
+Sign Out of VPN
+Signed out of VPN
+Site
+Split Tunnel
+Split Tunneling
+Split VPN Is Active
+Successfully mounted %@ to Finder.
+The device has been removed by your admin. Please try signing in again.
+This credential has already been used. Please contact your admin for a new credential.
+This Mac is supervised and managed by: Identity MDM
+This setting is managed by your organization
+This sign-in request could not be processed. Contact your admin for assistance.
+This will authenticate your site credential for %@.
+This workspace is blocked by your organization's policy. Contact your administrator.
+To get started, contact your admin to request permission for these features.
+Traffic Bypassed from the VPN
+Traffic Sent Through VPN
+Unable to mount %@. Please try again later or contact your admin for assistance.
+Unable to Mount Locked Encrypted Drives
+UniFi Drive Sync Settings
+View VPN Traffic List…
+VPN
+VPN Connected
+VPN Connection Failed
+VPN Is Not Working Properly
+VPN Server
+VPN Session Expires at %@
+VPN Tunnel Mode
+You will no longer be able to access %@ from this app. Are you sure you want to sign out?
+Your access is restricted due to directory settings. Please contact your admin.
+Your account has been deactivated by your admin. Please contact your admin.
+Your account has been disabled. Please contact your admin.
+Your account has been locked. Please contact your admin.
+Your account has expired. Please contact your admin.
+Your admin has revoked your credential. Please contact them for more information.
+Your files will show up in Finder without taking up hard drive space.
+Your password has expired. Please contact your admin.
+Your UniFi Drive
+
+===== RESOURCE HASHES (change signal) =====
+  aaf94835899e4229dfe9abd0b2bfd8dc1a16979807c187971c0e7c0265d88860  Contents/Info.plist
+  b15ee08a10c84093f064c2a55213698be2ceac83ed3e261d65b7e7fae8a880a6  Contents/Resources/en.lproj/Localizable.strings
+  main binary size (bytes)   : 72615232
+
+===== END =====
