@@ -50,6 +50,7 @@ Distribution targets: **Flatpak** (primary, if feasible) + native `.deb`/`.rpm`/
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | How the crates + daemon/clients fit together |
 | [`DECISIONS.md`](DECISIONS.md) | Append-only decision log (ADR-####) with options weighed |
 | [`AGENTS.md`](AGENTS.md) | Working guide + rules for humans/agents in this repo |
+| [`WORKFLOWS.md`](WORKFLOWS.md) | Common tasks: build/test, run, install on Linux, drift-check |
 | [`docs/fingerprints/`](docs/fingerprints/) | Raw dated fingerprints of each Mac app version |
 
 ## Tooling
