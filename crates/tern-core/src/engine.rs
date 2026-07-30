@@ -102,10 +102,19 @@ impl Engine {
 
     /// Turn on Access: enroll our key, provision a VPN session, bring up the tunnel, and auto-mount drives.
     pub async fn connect(&mut self, console_id: &str) -> Result<()> {
+        // Empty id → default to the first available console (single-site convenience for the switch/tray).
+        let console_id = if console_id.is_empty() {
+            self.hosts
+                .first()
+                .map(|h| h.console_id.clone())
+                .ok_or(Error::NoConsoleAvailable)?
+        } else {
+            console_id.to_string()
+        };
         self.access = Access::TurningOn;
         let public_key = self.ensure_keypair().await?;
         self.ucs.enroll_public_key(&public_key).await?;
-        let mut wg = self.ucs.create_vpn_session(console_id, &public_key).await?.wg;
+        let mut wg = self.ucs.create_vpn_session(&console_id, &public_key).await?.wg;
         if !wg.has_dialable_endpoint() {
             // Console is relay-only (needs UniFi's proprietary bridge) — out of scope; be honest, don't fake.
             self.access = Access::Unreachable;
@@ -121,7 +130,7 @@ impl Engine {
         self.access = Access::On;
         self.active_console = Some(console_id.to_string());
         // Best-effort drive discovery (endpoint unconfirmed) + auto-mount of the selected, reachable ones.
-        self.drives = self.ucs.drives(console_id).await.unwrap_or_default();
+        self.drives = self.ucs.drives(&console_id).await.unwrap_or_default();
         self.mount_selected().await;
         Ok(())
     }
@@ -265,7 +274,7 @@ mod tests {
         engine.sign_in("jwt-token".into()).await.unwrap();
         assert!(matches!(engine.snapshot().await.auth, Auth::SignedIn(_)));
 
-        engine.connect("c1").await.unwrap();
+        engine.connect("").await.unwrap(); // empty → defaults to the first host (c1)
         let snap = engine.snapshot().await;
         assert_eq!(snap.access, Access::On);
         assert_eq!(snap.summary_line(), "Access on · 1 drive mounted");
