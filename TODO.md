@@ -52,15 +52,24 @@ needs a **one-time privilege grant** (`setcap cap_net_admin` on the daemon, or `
      reflex < turn, IPv6 pref), the console's `peer_desc` parsed from `CONNECT_RESPONSE`. Unit-tested.
    - **✅ Live-validated** — `examples/teleport_probe.rs` hit the real broker `/metadata` with our derived token
      → HTTP 200 + the console's info. Proves stages ①–② against reality.
-3. **⬜ Connect offer + candidate exchange** — build the `connect` POST body (our WG pubkey + our gathered local
-   candidates + `is_master:false`), send via `Broker`, poll for `CONNECT_RESPONSE`. Local candidate gathering
-   needs a bound UDP socket + interface enumeration + STUN reflexive lookup. *Ref: Go `api.go`, `nomination.go`
-   `localCandidates`, `stun.go` reflexive.*
-4. **⬜ ICE/STUN nomination (LIVE — not unit-testable)** — the custom master/slave nomination: per-tuple STUN
-   Binding probes carrying a session-secret hash + MESSAGE-INTEGRITY, `waitForNomination` wait-sequence, pick the
-   reachable tuple (direct or Cloudflare-TURN). *Ref: Go `nomination.go` (771 lines), `stun.go`; Rust needs a STUN
-   crate (e.g. `stun`/`stun_codec`).* Output: a bound UDP socket + the nominated peer address. **This is where a
-   fresh invite + iterative testing against the console is required.**
+   - **✅ Pairing (redeem invite → session)** — `Broker::pair` = REQUEST_ACCESS → poll ACCESS_GRANTED → `Session`
+     {token, secret, device_token}. Wiremock-tested (paused clock). *Consumes the invite when run live.*
+   - **✅ STUN wire layer** — `teleport::stun` (`is_stun`/`binding_request`/`parse_xor_mapped_address`), hand-rolled,
+     unit-tested (round-trips XOR-MAPPED-ADDRESS).
+   - **✅ ICE candidate gathering, LIVE-validated** — `teleport::ice` (`local_candidates` host + `reflexive_candidate`
+     via STUN, `is_routable` filter). `examples/teleport_ice_probe` discovered our real public address via
+     Cloudflare STUN. So the whole **control plane** (invite → token → pair → session → candidates) is built.
+3. **⬜ Connect offer + candidate exchange (LIVE — consumes an invite)** — port `connectAndAwaitResponse`: pick a
+   random `stunSecret` (b64 32B; its `stunIntegrityKey` = the secret itself), build the `connect` envelope (our WG
+   pubkey + `is_master:false` + local candidates + ice + `secret`), `POST /` with the session token, poll for
+   `CONNECT_RESPONSE` (server `peer_desc.candidates` + `wg_pub_key` + tunnel addr). *Ref: Go `main.go`
+   `runConnectionAttempt`/`fetchICEConfiguration`.*
+4. **⬜ ICE/STUN nomination (LIVE — not unit-testable)** — the console-driven master/slave nomination: it sends
+   authenticated STUN Binding requests carrying DATA `wait` values in the sequence `[2000,1000,500,250,125]`; we
+   only VALIDATE MESSAGE-INTEGRITY (HMAC-SHA1 keyed by `stunSecret`) and reply Binding Success (never send DATA —
+   sending it reverses the role and the console won't activate WireGuard). Track the wait sequence per remote
+   tuple → the completing tuple is the nominated endpoint. *Ref: Go `nomination.go` (771 lines), `stun.go`; Rust
+   STUN integrity via `hmac`+`sha1`.* **Fresh invite + iterative live testing against the console required.**
 5. **⬜ Userspace WireGuard over the ICE socket → TUN** — run `boringtun` with our key + the console's key, sending
    WG packets on the ICE socket to the nominated peer; plumb decrypted packets to a **TUN device** (system-wide),
    add routes for AllowedIPs (subnet-subtract to avoid collisions). *Ref: Go `wireguard.go`, `tunnel.go`; crates:
