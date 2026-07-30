@@ -21,6 +21,8 @@ use crate::model::WireguardConfig;
 use crate::wg::KeyPair;
 use crate::{Error, Result};
 
+pub mod stun;
+
 /// Host a Teleport invite URL must use, so a stray link can't send us pairing somewhere else.
 const INVITE_HOST: &str = "teleport.ui.link";
 
