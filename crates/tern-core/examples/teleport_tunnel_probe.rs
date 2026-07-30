@@ -10,7 +10,7 @@
 //! Passing a `teleport.ui.link` invite consumes its single-use pairing and saves the session next to it;
 //! passing a saved session JSON path reuses it (no invite needed). Ctrl-C tears the tunnel down.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::Command;
 
 use tern_core::teleport::{dataplane::Tunnel, ice, new_stun_secret, nomination, Broker, Invite, Session};
@@ -70,20 +70,32 @@ async fn main() -> anyhow::Result<()> {
     println!("✓ nominated endpoint {nominated}");
 
     let wg_config = resp.to_wireguard_config(&kp, &nominated.to_string());
-    let tunnel_addr: Ipv4Addr = resp.server_info.tunnel_addr.parse()?;
+    let tunnel_addr: IpAddr = resp.server_info.tunnel_addr.parse()?;
     println!("bringing up {IFACE} with address {tunnel_addr}…");
     let tunnel = Tunnel::start(socket, nominated, &wg_config, IFACE).await?;
-
-    // Route the console's /24 LAN into the tunnel and try to reach the gateway (.1).
-    let o = tunnel_addr.octets();
-    let lan = format!("{}.{}.{}.0/24", o[0], o[1], o[2]);
-    let gateway = Ipv4Addr::new(o[0], o[1], o[2], 1);
     run("ip", &["link", "set", IFACE, "up"]);
-    run("ip", &["route", "replace", &lan, "dev", IFACE]);
-    println!("routed {lan} via {IFACE}; pinging gateway {gateway} (give the handshake a moment)…");
+
+    // Pick a peer to ping through the tunnel. IPv6 overlay: the console is the low host on the /120 (…::1),
+    // reachable via the connected route — no extra route needed. IPv4 overlay: route the console's /24 LAN
+    // and aim at its gateway (.1).
+    let (gateway, ping) = match tunnel_addr {
+        IpAddr::V6(v6) => {
+            let mut seg = v6.segments();
+            seg[7] = 1; // …:1c00:1 — the overlay peer
+            (IpAddr::V6(seg.into()), "ping")
+        }
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            let lan = format!("{}.{}.{}.0/24", o[0], o[1], o[2]);
+            run("ip", &["route", "replace", &lan, "dev", IFACE]);
+            println!("routed {lan} via {IFACE}");
+            (IpAddr::V4(Ipv4Addr::new(o[0], o[1], o[2], 1)), "ping")
+        }
+    };
+    println!("pinging peer {gateway} through the tunnel (give the handshake a moment)…");
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    let ok = Command::new("ping").args(["-c", "3", "-W", "3", &gateway.to_string()]).status().map(|s| s.success()).unwrap_or(false);
+    let ok = Command::new(ping).args(["-c", "3", "-W", "3", &gateway.to_string()]).status().map(|s| s.success()).unwrap_or(false);
     if ok {
         println!("\nRESULT: ✅ WireGuard handshake + data plane WORK — reached {gateway} through the Teleport tunnel.");
     } else {

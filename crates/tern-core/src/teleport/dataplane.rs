@@ -7,7 +7,7 @@
 //! module never execs a privileged helper. Routing (which traffic enters the tunnel) is layered on top by the
 //! backend; here we only own the interface address, the crypto, and the packet pump.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,18 +37,20 @@ fn key32(b64: &str) -> Result<[u8; 32]> {
         .ok_or_else(|| Error::InvalidConfig("a WireGuard key was not valid 32-byte base64".into()))
 }
 
-/// The interface address (`ip/prefix`) from a WireGuard config's `Address` list — the first IPv4 entry.
-/// Teleport always assigns a single IPv4 tunnel address, so IPv6 entries are ignored here.
-fn interface_addr(cfg: &WireguardConfig) -> Result<(Ipv4Addr, u8)> {
+/// The interface address (`ip/prefix`) from a WireGuard config's `Address` list — the first parseable entry.
+/// Teleport assigns a single tunnel address, either IPv4 or an IPv6 ULA (fd37::/… overlay), so we accept
+/// whichever family the console gave us and default the prefix to a host route for its family.
+fn interface_addr(cfg: &WireguardConfig) -> Result<(IpAddr, u8)> {
     cfg.address
         .iter()
         .find_map(|entry| {
-            let (ip, prefix) = entry.split_once('/').unwrap_or((entry.as_str(), "32"));
-            let ip: Ipv4Addr = ip.trim().parse().ok()?;
-            let prefix: u8 = prefix.trim().parse().unwrap_or(32);
-            Some((ip, prefix.min(32)))
+            let (ip, prefix) = entry.split_once('/').unwrap_or((entry.as_str(), ""));
+            let ip: IpAddr = ip.trim().parse().ok()?;
+            let host_prefix = if ip.is_ipv6() { 128 } else { 32 };
+            let prefix = prefix.trim().parse().unwrap_or(host_prefix).min(host_prefix);
+            Some((ip, prefix))
         })
-        .ok_or_else(|| Error::InvalidConfig("the config has no IPv4 tunnel address".into()))
+        .ok_or_else(|| Error::InvalidConfig("the config has no tunnel address".into()))
 }
 
 /// A running Teleport tunnel: a background task pumping packets between the socket and the TUN device, plus
@@ -60,7 +62,7 @@ pub struct Tunnel {
     /// The TUN interface name (e.g. `tern0`) — the backend routes traffic onto this.
     pub interface: String,
     /// The tunnel address the console assigned us (source address for tunneled traffic).
-    pub address: Ipv4Addr,
+    pub address: IpAddr,
 }
 
 impl Tunnel {
@@ -86,10 +88,12 @@ impl Tunnel {
         let tunn = Tunn::new(static_private, peer_public, preshared, Some(keepalive), 0, None);
 
         let (address, prefix) = interface_addr(cfg)?;
-        let device = DeviceBuilder::new()
-            .name(if_name)
-            .ipv4(address, prefix, None)
-            .mtu(TUN_MTU)
+        let mut builder = DeviceBuilder::new().name(if_name).mtu(TUN_MTU);
+        builder = match address {
+            IpAddr::V4(v4) => builder.ipv4(v4, prefix, None),
+            IpAddr::V6(v6) => builder.ipv6(v6, prefix),
+        };
+        let device = builder
             .build_async()
             .map_err(|e| match e.kind() {
                 std::io::ErrorKind::PermissionDenied => Error::PrivilegeRequired,
@@ -201,13 +205,16 @@ mod tests {
 
     #[test]
     fn parses_the_interface_address_and_prefix() {
-        assert_eq!(interface_addr(&cfg_with(&["192.168.2.7/32"])).unwrap(), (Ipv4Addr::new(192, 168, 2, 7), 32));
-        assert_eq!(interface_addr(&cfg_with(&["10.0.0.5"])).unwrap(), (Ipv4Addr::new(10, 0, 0, 5), 32));
-        // IPv6 entries are skipped in favour of the IPv4 tunnel address.
+        let v4: IpAddr = "192.168.2.7".parse().unwrap();
+        assert_eq!(interface_addr(&cfg_with(&["192.168.2.7/32"])).unwrap(), (v4, 32));
+        assert_eq!(interface_addr(&cfg_with(&["10.0.0.5"])).unwrap(), ("10.0.0.5".parse().unwrap(), 32));
+        // IPv6 ULA tunnel address (what real UniFi Teleport assigns) — the /120 overlay prefix is kept.
         assert_eq!(
-            interface_addr(&cfg_with(&["fd00::1/64", "100.64.0.2/32"])).unwrap(),
-            (Ipv4Addr::new(100, 64, 0, 2), 32)
+            interface_addr(&cfg_with(&["fd37:5753:430c:4aee:b66a:e44d:1c00:2/120"])).unwrap(),
+            ("fd37:5753:430c:4aee:b66a:e44d:1c00:2".parse().unwrap(), 120)
         );
+        // A bare IPv6 with no prefix defaults to a /128 host route.
+        assert_eq!(interface_addr(&cfg_with(&["fd00::1"])).unwrap(), ("fd00::1".parse().unwrap(), 128));
         assert!(interface_addr(&cfg_with(&[])).is_err());
     }
 }
