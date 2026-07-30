@@ -239,6 +239,26 @@ fn build_ui(
     import_btn.set_halign(gtk::Align::Center);
     content.append(&import_btn);
 
+    // Owner-requested (docs/09 §12): a link to the console's web UI at the top of the main view. Opens
+    // https://unifi.ui.com in the default browser.
+    let console_group = adw::PreferencesGroup::new();
+    let console_row = adw::ActionRow::builder()
+        .title("Open your console")
+        .subtitle("unifi.ui.com")
+        .activatable(true)
+        .build();
+    console_row.add_suffix(&gtk::Image::from_icon_name("adw-external-link-symbolic"));
+    console_row.connect_activated(|_| {
+        if let Err(e) = gtk::gio::AppInfo::launch_default_for_uri(
+            "https://unifi.ui.com",
+            gtk::gio::AppLaunchContext::NONE,
+        ) {
+            tracing::warn!(error = %e, "couldn't open the console URL");
+        }
+    });
+    console_group.add(&console_row);
+    content.append(&console_group);
+
     let access_group = adw::PreferencesGroup::new();
     access_group.set_title("Access");
     let access_row = adw::ActionRow::builder().title("One-Click VPN").subtitle("Off").build();
@@ -399,6 +419,7 @@ fn build_ui(
                     invite_group.set_visible(!show_main);
                     connect_btn.set_visible(!show_main);
                     import_btn.set_visible(!show_main);
+                    console_group.set_visible(show_main);
                     access_group.set_visible(show_main);
                     drives_label.set_visible(show_main);
                     drives_list.set_visible(show_main);

@@ -480,11 +480,13 @@ OAuth-era interface is missing.
 Recorded so they aren't lost; add to the window later:
 
 - **Top link row → the console web UI.** An `AdwPreferencesGroup` at the very top of the main view holding one
-  row (an `AdwActionRow`/`AdwButtonRow` with a link/"external" affordance) that opens **`https://unifi.ui.com`**
-  in the **default browser** (`gtk::UriLauncher::launch`). Sits above the Access group.
+  row (an `AdwActionRow` with an external-link affordance) that opens **`https://unifi.ui.com`** in the
+  **default browser**. Sits above the Access group. *(Done — `console_group`, opens via
+  `gio::AppInfo::launch_default_for_uri`; shown with the main view.)*
 - **"Detect shares" group at the bottom.** An `AdwPreferencesGroup` below the drives list with an action to
   **scan/detect available SMB shares** on the reachable network and offer to add them as drives — complements
-  the per-drive auto-mount UX.
+  the per-drive auto-mount UX. *(Still backlog — needs an SMB-browse backend + a daemon method; deliberately not
+  shipped as a dead button. Revisit once the tunnel carries traffic and a `detect_shares` daemon call exists.)*
 - **Notifications are a firm feature** (owner override of "quiet by default"): keep desktop notifications
   (freedesktop/KDE) for every meaningful Access transition — Connected / Disconnected / degraded / unreachable —
   and connect/disconnect available from the tray (SNI) menu. *(Done.)*
