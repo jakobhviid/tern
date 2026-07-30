@@ -101,6 +101,7 @@ impl Tunnel {
         endpoint: SocketAddr,
         cfg: &WireguardConfig,
         if_name: &str,
+        stun_secret: &str,
     ) -> Result<Tunnel> {
         let private = cfg
             .client_private_key
@@ -130,7 +131,15 @@ impl Tunnel {
 
         let stop = Arc::new(Notify::new());
         let stats = Arc::new(Stats::default());
-        let task = tokio::spawn(pump(tunn, Arc::new(socket), Arc::new(device), endpoint, stop.clone(), stats.clone()));
+        let task = tokio::spawn(pump(
+            tunn,
+            Arc::new(socket),
+            Arc::new(device),
+            endpoint,
+            stun_secret.to_string(),
+            stop.clone(),
+            stats.clone(),
+        ));
         Ok(Tunnel { stop, task, stats, interface: if_name.to_string(), address, prefix })
     }
 
@@ -149,9 +158,11 @@ async fn pump(
     socket: Arc<UdpSocket>,
     device: Arc<AsyncDevice>,
     endpoint: SocketAddr,
+    stun_secret: String,
     stop: Arc<Notify>,
     stats: Arc<Stats>,
 ) {
+    let stun_key = stun_secret.as_bytes();
     let mut net_buf = [0u8; 1600]; // ciphertext in from the socket
     let mut tun_buf = [0u8; 1600]; // plaintext in from the TUN
     let mut out = [0u8; 1600]; // scratch for boringtun output (both directions)
@@ -186,10 +197,18 @@ async fn pump(
             recv = socket.recv_from(&mut net_buf) => {
                 let Ok((n, from)) = recv else { continue };
                 stats.net_in.fetch_add(1, Ordering::Relaxed);
-                // The console may still send authenticated STUN keepalives on this socket after nomination;
-                // those aren't WireGuard, so don't feed them to boringtun.
+                // The console keeps sending authenticated STUN Binding requests on this socket after
+                // nomination — consent-freshness checks (RFC 7675). Keep answering them (Binding Success) so
+                // it considers the path alive; if we go silent it can stop sending WireGuard and the tunnel
+                // stalls. These aren't WireGuard, so they never reach boringtun.
                 if stun::is_stun(&net_buf[..n]) {
                     stats.net_in_stun.fetch_add(1, Ordering::Relaxed);
+                    let data = &net_buf[..n];
+                    if data[0..2] == [0x00, 0x01] && stun::validate_message_integrity(data, stun_key) {
+                        if let Some(txid) = stun::transaction_id(data) {
+                            let _ = socket.send_to(&stun::binding_success(&txid, stun_key), from).await;
+                        }
+                    }
                     continue;
                 }
                 // decapsulate can ask us to write more to the network (queued handshake/keepalive); the

@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
     let wg_config = resp.to_wireguard_config(&kp, &nominated.to_string());
     println!("bringing up {IFACE} with address {}…", si.tunnel_addr);
-    let tunnel = Tunnel::start(socket, nominated, &wg_config, IFACE).await?;
+    let tunnel = Tunnel::start(socket, nominated, &wg_config, IFACE, &stun_secret).await?;
 
     // Address + up are applied here (iproute2), not inside the library. Order matters: bring the link up,
     // then (for an IPv6 ULA overlay) clear the per-interface `disable_ipv6` — fresh TUN interfaces on this

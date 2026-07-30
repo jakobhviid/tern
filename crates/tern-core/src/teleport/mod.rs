@@ -458,7 +458,7 @@ pub async fn establish(broker: &Broker, session: &Session, if_name: &str) -> Res
         .ok_or(Error::VpnUnreachable)?;
     tracing::info!(%nominated, "teleport: endpoint nominated; bringing up tunnel");
     let wg_config = resp.to_wireguard_config(&kp, &nominated.to_string());
-    dataplane::Tunnel::start(socket, nominated, &wg_config, if_name).await
+    dataplane::Tunnel::start(socket, nominated, &wg_config, if_name, &stun_secret).await
 }
 
 fn invalid(input: &str) -> Error {
