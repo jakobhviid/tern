@@ -214,6 +214,26 @@ fn candidate_score(c: &Candidate) -> i32 {
     }
 }
 
+/// A paired Teleport session, obtained by redeeming an invite (`REQUEST_ACCESS` → `ACCESS_GRANTED`). The
+/// `token`/`secret` authenticate subsequent signaling; `device_token` is the invite-derived token.
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub token: String,
+    pub secret: String,
+    pub device_token: String,
+}
+
+/// A random v4 UUID (for the `client_id` sent with `REQUEST_ACCESS`). Ports the reference `randomUUID`.
+fn random_uuid() -> String {
+    use rand_core::RngCore;
+    let mut b = [0u8; 16];
+    rand_core::OsRng.fill_bytes(&mut b);
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h = |r: &[u8]| r.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    format!("{}-{}-{}-{}-{}", h(&b[0..4]), h(&b[4..6]), h(&b[6..8]), h(&b[8..10]), h(&b[10..16]))
+}
+
 /// Client for the Teleport signaling broker ([`BROKER_BASE`]). Ports the reference client's transport:
 /// every call carries the invite-derived `?token=`, a `202 Accepted` / empty body means "still pending",
 /// and [`Broker::poll`] waits for a target `response_type`. The `connect` offer itself (client WireGuard key
@@ -248,7 +268,10 @@ impl Broker {
         token: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<BrokerResponse> {
-        let mut req = self.http.request(method, format!("{}{}", self.base, path)).query(&[("token", token)]);
+        let mut req = self.http.request(method, format!("{}{}", self.base, path));
+        if !token.is_empty() {
+            req = req.query(&[("token", token)]);
+        }
         if let Some(b) = body {
             req = req.json(b);
         }
@@ -285,6 +308,34 @@ impl Broker {
             }
         }
         Ok(None)
+    }
+
+    /// Redeem an invite into a paired [`Session`]: `POST /` with a `REQUEST_ACCESS` envelope (no query
+    /// token — the envelope carries the invite-derived token), then poll `/{requestId}` for `ACCESS_GRANTED`.
+    /// **Single-use: this consumes the invite's pairing capability.** Ports the reference `establishSession`.
+    pub async fn pair(&self, invite: &Invite, client_name: &str) -> Result<Session> {
+        let device_token = invite.token()?;
+        let body = serde_json::json!({
+            "token": device_token,
+            "payload": {
+                "request_type": "REQUEST_ACCESS",
+                "secret": invite.id,
+                "client_id": random_uuid(),
+                "client_name": client_name,
+            }
+        });
+        let access = self.request(reqwest::Method::POST, "/", "", Some(&body)).await?;
+        if access.request_id.is_empty() {
+            return Err(Error::Other(anyhow::anyhow!("teleport: REQUEST_ACCESS returned no request id")));
+        }
+        let granted = self
+            .poll(&device_token, &access.request_id, "ACCESS_GRANTED", Duration::from_secs(2), 60)
+            .await?
+            .ok_or_else(|| Error::Other(anyhow::anyhow!("teleport: timed out waiting for ACCESS_GRANTED")))?;
+        if granted.token.is_empty() {
+            return Err(Error::Other(anyhow::anyhow!("teleport: access granted without a session token")));
+        }
+        Ok(Session { token: granted.token, secret: granted.secret, device_token })
     }
 }
 
@@ -490,5 +541,36 @@ mod tests {
         assert!(r.server_info.peer_desc.is_master);
         assert_eq!(r.server_info.peer_desc.candidates.len(), 2);
         assert_eq!(r.server_info.peer_desc.candidates[0].addr, "192.168.60.1:54313");
+    }
+
+    #[tokio::test]
+    async fn pair_redeems_an_invite_into_a_session() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "teleportRequestId": "acc-1"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/acc-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "response_type": "ACCESS_GRANTED", "token": "sess-tok", "secret": "sess-sec"
+            })))
+            .mount(&server)
+            .await;
+
+        // Speed the poll's first sleep up via a paused clock (tokio auto-advances when nothing else is ready).
+        tokio::time::pause();
+        let broker = Broker::with_base(server.uri());
+        let invite = Invite::parse(UUID).unwrap();
+        let session = broker.pair(&invite, "test-client").await.unwrap();
+        assert_eq!(session.token, "sess-tok");
+        assert_eq!(session.secret, "sess-sec");
+        assert_eq!(session.device_token, invite.token().unwrap());
     }
 }
