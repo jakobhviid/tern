@@ -18,6 +18,7 @@ use tray::TernTray;
 
 /// Commands from the UI/tray to the D-Bus actor.
 enum Cmd {
+    StartSignIn,
     Connect(String),
     Disconnect,
     SignOut,
@@ -42,6 +43,7 @@ enum Update {
 )]
 trait Tern {
     async fn snapshot(&self) -> zbus::Result<String>;
+    async fn start_sign_in(&self) -> zbus::Result<String>;
     async fn connect(&self, console_id: &str) -> zbus::Result<String>;
     async fn disconnect(&self) -> zbus::Result<String>;
     async fn sign_out(&self) -> zbus::Result<String>;
@@ -113,6 +115,7 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
 
     while let Ok(cmd) = cmd_rx.recv().await {
         let _ = match cmd {
+            Cmd::StartSignIn => proxy.start_sign_in().await,
             Cmd::Connect(id) => proxy.connect(&id).await,
             Cmd::Disconnect => proxy.disconnect().await,
             Cmd::SignOut => proxy.sign_out().await,
@@ -178,9 +181,14 @@ fn build_ui(
     drives_list.set_selection_mode(gtk::SelectionMode::None);
     content.append(&drives_list);
 
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_halign(gtk::Align::Start);
+    let signin = gtk::Button::with_label("Sign in");
+    signin.add_css_class("suggested-action");
     let signout = gtk::Button::with_label("Sign out");
-    signout.set_halign(gtk::Align::Start);
-    content.append(&signout);
+    actions.append(&signin);
+    actions.append(&signout);
+    content.append(&actions);
 
     toolbar.set_content(Some(&content));
     window.set_content(Some(&toolbar));
@@ -210,6 +218,12 @@ fn build_ui(
                 let _ = cmd_tx.try_send(cmd);
             }
             glib::Propagation::Proceed
+        });
+    }
+    {
+        let cmd_tx = cmd_tx.clone();
+        signin.connect_clicked(move |_| {
+            let _ = cmd_tx.try_send(Cmd::StartSignIn);
         });
     }
     {

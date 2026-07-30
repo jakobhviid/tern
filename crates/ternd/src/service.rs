@@ -65,6 +65,24 @@ impl TernService {
         self.finish(res, &emitter).await
     }
 
+    /// Begin the browser SSO flow (RFC 8252 + PKCE, passkey-capable): open the browser, catch the loopback
+    /// redirect, exchange the code, and sign in. Emits `Changed` at the start ("Signing you in…") and again
+    /// with the result. The engine lock is not held during the (possibly long) browser interaction.
+    async fn start_sign_in(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) -> String {
+        self.engine.lock().await.begin_sign_in();
+        self.emit_changed(&emitter).await;
+
+        let token = tern_core::auth::run_login_flow(&tern_core::auth::AuthConfig::default()).await;
+        let res = match token {
+            Ok(t) => self.engine.lock().await.sign_in(t).await,
+            Err(e) => Err(e),
+        };
+        if res.is_err() {
+            self.engine.lock().await.cancel_sign_in();
+        }
+        self.finish(res, &emitter).await
+    }
+
     async fn sign_out(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) -> String {
         let res = self.engine.lock().await.sign_out().await;
         self.finish(res, &emitter).await

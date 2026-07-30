@@ -38,6 +38,7 @@ phd.hviid.Tern).
 trait Tern {
     async fn snapshot(&self) -> zbus::Result<String>;
     async fn hosts(&self) -> zbus::Result<String>;
+    async fn start_sign_in(&self) -> zbus::Result<String>;
     async fn complete_sign_in(&self, token: &str) -> zbus::Result<String>;
     async fn sign_out(&self) -> zbus::Result<String>;
     async fn connect(&self, console_id: &str) -> zbus::Result<String>;
@@ -62,9 +63,11 @@ struct Cli {
 enum Command {
     /// Show current status (sign-in, Access, drives).
     Status,
+    /// Sign in with your web browser (passkeys / SSO supported).
+    Login,
     /// List the consoles/sites available to you.
     Hosts,
-    /// Complete sign-in with a bearer token (placeholder until the browser flow lands).
+    /// Complete sign-in with a bearer token (for testing; prefer `login`).
     SignIn { token: String },
     /// Sign out.
     SignOut,
@@ -129,6 +132,7 @@ async fn main() -> Result<()> {
 
     match command {
         Command::Status => render_snapshot(&proxy.snapshot().await?, cli.json)?,
+        Command::Login => render_action(&proxy.start_sign_in().await?, cli.json)?,
         Command::Hosts => render_hosts(&proxy.hosts().await?, cli.json)?,
         Command::SignIn { token } => render_action(&proxy.complete_sign_in(&token).await?, cli.json)?,
         Command::SignOut => render_action(&proxy.sign_out().await?, cli.json)?,

@@ -71,12 +71,32 @@ impl Engine {
     /// Complete sign-in given a bearer token obtained from browser SSO (ADR-0009).
     pub async fn sign_in(&mut self, token: String) -> Result<()> {
         self.auth = Auth::SigningIn;
+        let result = self.sign_in_inner(token).await;
+        if result.is_err() {
+            self.auth = Auth::SignedOut;
+        }
+        result
+    }
+
+    async fn sign_in_inner(&mut self, token: String) -> Result<()> {
         self.secrets.set(TOKEN_KEY, &token).await?;
         self.ucs.set_token(Some(token));
         let identity = self.ucs.identity().await?;
         self.hosts = self.ucs.hosts().await?;
         self.auth = Auth::SignedIn(identity);
         Ok(())
+    }
+
+    /// Mark that a browser sign-in is starting (shown as "Signing you in…").
+    pub fn begin_sign_in(&mut self) {
+        self.auth = Auth::SigningIn;
+    }
+
+    /// Roll back to signed-out if a sign-in attempt failed or was cancelled.
+    pub fn cancel_sign_in(&mut self) {
+        if matches!(self.auth, Auth::SigningIn) {
+            self.auth = Auth::SignedOut;
+        }
     }
 
     /// Restore a saved session token at startup (for "connect at startup"), if one is stored.

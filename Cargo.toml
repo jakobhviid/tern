@@ -29,6 +29,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 url = "2"
 base64 = "0.22"
+sha2 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 directories = "5"
 # WireGuard key material (X25519) — permissive (BSD/MIT), no OpenSSL.
