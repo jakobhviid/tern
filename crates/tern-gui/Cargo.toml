@@ -21,6 +21,7 @@ zbus.workspace = true
 tokio.workspace = true
 async-channel = "2"
 futures-util = "0.3"
+ksni = { version = "0.3", features = ["blocking"] }
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

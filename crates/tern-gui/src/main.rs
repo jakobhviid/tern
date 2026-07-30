@@ -1,10 +1,7 @@
-//! `tern-gui` — the GNOME-native (GTK4 + libadwaita) front-end. It is a thin client of `ternd`: a background
-//! thread runs a tokio runtime that holds the D-Bus proxy, executes commands, and streams live `Changed`
-//! updates; the GTK main thread renders the [`Snapshot`] and sends commands. The two threads talk over
-//! `async-channel` (runtime-agnostic), so no tokio/glib main-loop mixing is needed.
-//!
-//! The top-bar tray icon (ksni / StatusNotifierItem) is added and verified on Linux (it needs a real SNI
-//! host); this window is fully functional on its own.
+//! `tern-gui` — the GNOME-native (GTK4 + libadwaita) front-end + top-bar tray. It is a thin client of
+//! `ternd`: a background thread runs a tokio runtime that holds the D-Bus proxy, executes commands, and
+//! streams live `Changed` updates; the GTK main thread renders the [`Snapshot`] and the tray reflects it.
+//! The three threads (GTK, tokio actor, ksni tray) talk over `async-channel`, so no runtime mixing is needed.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -12,10 +9,14 @@ use std::rc::Rc;
 use adw::prelude::*;
 use futures_util::StreamExt;
 use gtk::glib;
+use ksni::blocking::TrayMethods;
 use tern_core::ipc::BUS_NAME;
 use tern_core::state::{Access, Snapshot};
 
-/// Commands from the UI to the D-Bus actor.
+mod tray;
+use tray::TernTray;
+
+/// Commands from the UI/tray to the D-Bus actor.
 enum Cmd {
     Connect(String),
     Disconnect,
@@ -23,10 +24,14 @@ enum Cmd {
     Refresh,
 }
 
-/// Updates from the actor to the UI.
+/// Updates from the actor/tray to the GTK main loop.
 enum Update {
     Snapshot(Box<Snapshot>),
     Disconnected(String),
+    /// Show the window (from the tray "Open").
+    Present,
+    /// Quit the app (from the tray "Quit").
+    Quit,
 }
 
 #[zbus::proxy(
@@ -52,21 +57,24 @@ fn main() -> glib::ExitCode {
     let (update_tx, update_rx) = async_channel::unbounded::<Update>();
 
     // D-Bus actor on a background thread with its own single-threaded tokio runtime.
+    let actor_tx = update_tx.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("tokio runtime");
-        rt.block_on(actor(cmd_rx, update_tx));
+        rt.block_on(actor(cmd_rx, actor_tx));
     });
 
     let app = adw::Application::builder().application_id(BUS_NAME).build();
-    app.connect_activate(move |app| build_ui(app, cmd_tx.clone(), update_rx.clone()));
+    app.connect_activate(move |app| {
+        build_ui(app, cmd_tx.clone(), update_tx.clone(), update_rx.clone())
+    });
     app.run()
 }
 
-/// The background D-Bus actor: connects to `ternd`, pushes snapshots (initial + on every `Changed`), and
-/// runs commands from the UI.
+/// The background D-Bus actor: connects to `ternd`, pushes snapshots (initial + on every `Changed`), and runs
+/// commands from the UI/tray.
 async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::Sender<Update>) {
     let conn = match zbus::Connection::session().await {
         Ok(c) => c,
@@ -85,7 +93,6 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
 
     push_snapshot(&proxy, &update_tx).await;
 
-    // Live updates: forward every Changed signal to the UI.
     {
         let proxy = proxy.clone();
         let tx = update_tx.clone();
@@ -109,7 +116,6 @@ async fn actor(cmd_rx: async_channel::Receiver<Cmd>, update_tx: async_channel::S
             Cmd::SignOut => proxy.sign_out().await,
             Cmd::Refresh => proxy.snapshot().await,
         };
-        // The daemon emits Changed on state transitions, but refresh explicitly too for robustness.
         push_snapshot(&proxy, &update_tx).await;
     }
 }
@@ -122,7 +128,12 @@ async fn push_snapshot(proxy: &TernProxy<'_>, tx: &async_channel::Sender<Update>
     }
 }
 
-fn build_ui(app: &adw::Application, cmd_tx: async_channel::Sender<Cmd>, update_rx: async_channel::Receiver<Update>) {
+fn build_ui(
+    app: &adw::Application,
+    cmd_tx: async_channel::Sender<Cmd>,
+    update_tx: async_channel::Sender<Update>,
+    update_rx: async_channel::Receiver<Update>,
+) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Tern")
@@ -145,7 +156,6 @@ fn build_ui(app: &adw::Application, cmd_tx: async_channel::Sender<Cmd>, update_r
     summary.set_wrap(true);
     content.append(&summary);
 
-    // Access group with a toggle.
     let access_group = adw::PreferencesGroup::new();
     access_group.set_title("Access");
     let access_row = adw::ActionRow::builder().title("One-Click VPN").subtitle("Off").build();
@@ -156,7 +166,6 @@ fn build_ui(app: &adw::Application, cmd_tx: async_channel::Sender<Cmd>, update_r
     access_group.add(&access_row);
     content.append(&access_group);
 
-    // Drives.
     let drives_label = gtk::Label::new(Some("Drives"));
     drives_label.add_css_class("heading");
     drives_label.set_xalign(0.0);
@@ -166,7 +175,6 @@ fn build_ui(app: &adw::Application, cmd_tx: async_channel::Sender<Cmd>, update_r
     drives_list.set_selection_mode(gtk::SelectionMode::None);
     content.append(&drives_list);
 
-    // Actions.
     let signout = gtk::Button::with_label("Sign out");
     signout.set_halign(gtk::Align::Start);
     content.append(&signout);
@@ -174,22 +182,28 @@ fn build_ui(app: &adw::Application, cmd_tx: async_channel::Sender<Cmd>, update_r
     toolbar.set_content(Some(&content));
     window.set_content(Some(&toolbar));
 
-    // The console we connect to (first host). Populated from snapshots later; empty until then.
-    let console_id = Rc::new(std::cell::RefCell::new(String::new()));
+    // Tray icon (StatusNotifierItem). Optional: absent SNI host / no session bus → run without it.
+    let tray = TernTray {
+        snapshot: Snapshot::signed_out(),
+        cmd_tx: cmd_tx.clone(),
+        gui_tx: update_tx.clone(),
+    };
+    let tray_handle = match tray.spawn() {
+        Ok(h) => Some(h),
+        Err(e) => {
+            tracing::warn!(error = %e, "tray unavailable (no SNI host?) — window still works");
+            None
+        }
+    };
+
     // Guard so programmatic switch updates don't echo back as user commands.
     let updating = Rc::new(Cell::new(false));
-
     {
         let cmd_tx = cmd_tx.clone();
-        let console_id = console_id.clone();
         let updating = updating.clone();
         access_switch.connect_state_set(move |_, state| {
             if !updating.get() {
-                let cmd = if state {
-                    Cmd::Connect(console_id.borrow().clone())
-                } else {
-                    Cmd::Disconnect
-                };
+                let cmd = if state { Cmd::Connect(String::new()) } else { Cmd::Disconnect };
                 let _ = cmd_tx.try_send(cmd);
             }
             glib::Propagation::Proceed
@@ -202,13 +216,19 @@ fn build_ui(app: &adw::Application, cmd_tx: async_channel::Sender<Cmd>, update_r
         });
     }
 
-    // Apply updates on the GTK main context.
+    let app_loop = app.clone();
+    let window_loop = window.clone();
     glib::spawn_future_local(async move {
         while let Ok(update) = update_rx.recv().await {
             match update {
+                Update::Present => window_loop.present(),
+                Update::Quit => app_loop.quit(),
                 Update::Disconnected(reason) => {
                     summary.set_text("Background service not running");
                     access_switch.set_sensitive(false);
+                    if let Some(h) = &tray_handle {
+                        h.update(|t| t.snapshot = Snapshot::signed_out());
+                    }
                     tracing::warn!(%reason, "actor disconnected");
                 }
                 Update::Snapshot(snap) => {
@@ -231,6 +251,11 @@ fn build_ui(app: &adw::Application, cmd_tx: async_channel::Sender<Cmd>, update_r
                             .subtitle(d.state.label())
                             .build();
                         drives_list.append(&row);
+                    }
+
+                    if let Some(h) = &tray_handle {
+                        let s = (*snap).clone();
+                        h.update(move |t| t.snapshot = s);
                     }
                 }
             }
