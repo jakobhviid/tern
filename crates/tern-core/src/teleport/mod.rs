@@ -291,7 +291,13 @@ impl Broker {
         }
         let resp = req.send().await.map_err(|e| Error::Http(e.to_string()))?;
         let status = resp.status();
-        if status.is_client_error() || status.is_server_error() {
+        // Every teleport call authenticates with the invite-derived token, so a client error (4xx) almost
+        // always means the invite is invalid or already used (a fresh pairing consumes it) — surface the
+        // actionable "get a new invite" rather than a generic HTTP message. Server errors stay generic.
+        if status.is_client_error() {
+            return Err(Error::InviteAlreadyUsed);
+        }
+        if status.is_server_error() {
             return Err(Error::Http(format!("teleport broker returned HTTP {}", status.as_u16())));
         }
         if status == reqwest::StatusCode::ACCEPTED {
@@ -610,6 +616,20 @@ mod tests {
             .unwrap();
         assert_eq!(r.request_id, "req-1");
         assert_eq!(r.response_type, "SESSION_CREATED");
+    }
+
+    #[tokio::test]
+    async fn broker_maps_a_4xx_to_invite_already_used() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(400)).mount(&server).await;
+
+        let broker = Broker::with_base(server.uri());
+        let err = broker.request(reqwest::Method::POST, "/", "TOK", None).await.unwrap_err();
+        // A spent/invalid invite (HTTP 400) → the actionable "get a new invite", not a raw HTTP message.
+        assert!(matches!(err, Error::InviteAlreadyUsed), "got {err:?}");
     }
 
     #[tokio::test]
