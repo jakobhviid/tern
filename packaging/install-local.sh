@@ -6,14 +6,28 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "==> Building release binaries…"
-cargo build --release --bin ternd --bin tern --bin tern-gui
-
 BIN="$HOME/.local/bin"
 mkdir -p "$BIN"
-install -m755 target/release/ternd    "$BIN/ternd"
-install -m755 target/release/tern     "$BIN/tern"
-install -m755 target/release/tern-gui "$BIN/tern-gui"
+
+# The daemon + CLI have no GUI system-lib deps — build/install them first so a GUI toolchain problem never
+# blocks the part you need to connect (ternd/tern).
+echo "==> Building the daemon + CLI…"
+cargo build --release --bin ternd --bin tern
+install -m755 target/release/ternd "$BIN/ternd"
+install -m755 target/release/tern  "$BIN/tern"
+
+# The GUI links gtk4/libadwaita. On Bazzite/Fedora Atomic these come from Homebrew, so point pkg-config at the
+# brew prefixes (incl. xorgproto, which the X libs pull in). Non-fatal: if the GUI won't build, the CLI still works.
+if command -v brew >/dev/null 2>&1; then
+  BREW="$(brew --prefix)"
+  export PKG_CONFIG_PATH="$BREW/lib/pkgconfig:$BREW/share/pkgconfig:$(brew --prefix xorgproto 2>/dev/null)/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+fi
+echo "==> Building the GUI…"
+if cargo build --release --bin tern-gui; then
+  install -m755 target/release/tern-gui "$BIN/tern-gui"
+else
+  echo "   (GUI build failed — CLI/daemon are installed; fix gtk4/libadwaita/xorgproto via brew and re-run.)"
+fi
 
 # The Teleport data plane creates a TUN device in-process (ADR-0016), which needs CAP_NET_ADMIN. A systemd
 # --user service can't be granted ambient capabilities, so we set a file capability on the binary instead.
