@@ -7,9 +7,10 @@ so we can keep the port in sync and fix it when Ubiquiti changes something.
 ## Goal
 
 A GNOME-first (KDE later) menu-bar-style app, Rust preferred, that can:
-1. **Log in** via UniFi SSO (browser OAuth).
-2. **Connect the One-Click VPN** (WireGuard / "Teleport-style").
-3. **Link to the admin/manage site.**
+1. **Connect** via a **Teleport invite** from the console — the working consumer-account path (ADR-0016) —
+   or import a plain WireGuard config.
+2. **Reach the network** over the One-Click VPN — userspace **WireGuard** carried over ICE/STUN ("Teleport").
+3. **Link to the admin/manage site** (`unifi.ui.com`, in the browser).
 4. **Auto-mount UniFi Drive shares** — selectively, per-drive, whenever reachable (LAN or over the VPN).
 
 Distribution targets: **Flatpak** (primary, if feasible) + native `.deb`/`.rpm`/AUR; Homebrew evaluated.
@@ -28,7 +29,10 @@ Distribution targets: **Flatpak** (primary, if feasible) + native `.deb`/`.rpm`/
 - **VPN engine:** userspace **WireGuard** via **sing-box + sagernet/wireguard-go + gVisor netstack**, run as
   a macOS Network-Extension system extension. Config is **cloud-provisioned per session — not exportable**;
   provisioned by a clean REST **"UCS" API** (`POST .../vpn/session` → a standard WireGuard config), *not* the
-  consumer-Teleport ICE/STUN broker (confirmed from the binary — see doc 02).
+  consumer-Teleport ICE/STUN broker (confirmed from the binary — see doc 02). **Our client took the Teleport
+  path instead:** that newer UCS/Identity-Hub chain turned out to be auth-walled for a plain consumer account,
+  while the **Teleport invite broker** connects end-to-end — so tern ports Teleport (invite → ICE/STUN
+  nomination → in-process userspace WireGuard over a TUN) rather than the Mac app's UCS flow (ADR-0016).
 - **Drives:** SMB via a `NetFSMountCoordinator`; a separate CloudAccess/WebRTC path for remote (no-VPN) access.
 - **No official Linux client exists**, but **two open-source reverse-engineered clients do**
   (`darki73/telepy-cli`, `sinnet3000/teleport-client`) and document the auth/broker handshake.
@@ -63,21 +67,27 @@ Distribution targets: **Flatpak** (primary, if feasible) + native `.deb`/`.rpm`/
 
 Working vertical slice, built and compiled end-to-end (much of it on macOS, all of it green on Ubuntu CI):
 
-- **`tern-core`** — auth/UCS client, WireGuard keygen, state machine, backend traits, and the orchestration
-  **engine**; 24 tests incl. mock-HTTP round-trips and the full flow.
-- **`ternd`** — background service exposing the engine over a session-bus D-Bus API (+ live `Changed` signal).
-- **`tern-linux`** — NetworkManager/GVfs/keyring backends (via `nmcli`/`gio`/`secret-tool`).
-- **`tern`** (CLI) and **`tern-gui`** (GTK4 + libadwaita window **+ top-bar tray**) — thin D-Bus clients.
+- **`tern-core`** — auth/UCS client, WireGuard keygen, state machine, backend traits, the orchestration
+  **engine**, and the **Teleport client**: invite parsing, broker pairing, ICE/STUN + MESSAGE-INTEGRITY
+  nomination, and the userspace-WireGuard (boringtun) **data plane**. 63 tests incl. mock-HTTP round-trips,
+  the full engine flow, a boringtun handshake round-trip, and the nomination sequence. The **control plane is
+  validated live** against a real console (invite → session → ICE → connect → nomination).
+- **`ternd`** — background service exposing the engine over a session-bus D-Bus API (+ live `Changed` signal);
+  drives the Teleport lifecycle (`redeem_invite`, reconnect, forget) and restores a saved session at startup.
+- **`tern-linux`** — NetworkManager/GVfs/keyring backends (via `nmcli`/`gio`/`secret-tool`) **plus the Teleport
+  data-plane backend** (in-process TUN + iproute2; needs `CAP_NET_ADMIN` via `setcap`).
+- **`tern`** (CLI, incl. `tern redeem`/`tern import`) and **`tern-gui`** (GTK4 + libadwaita window **+ top-bar
+  tray**) — thin D-Bus clients.
 - **Packaging** — systemd unit, D-Bus activation, desktop entry, AppStream metainfo, icon, Flatpak manifest,
-  and `packaging/install-local.sh`.
+  and `packaging/install-local.sh` (grants the daemon `CAP_NET_ADMIN`).
 
-Next (needs the Linux box / a real account): the browser+loopback SSO flow, runtime validation of the
-backends, and confirming the UCS wire shapes by capture — see [`docs/06-build-plan.md`](docs/06-build-plan.md)
-and [`docs/07-bazzite-bringup.md`](docs/07-bazzite-bringup.md). Baseline macOS-app fingerprint: **v4.1.1
-(build 177)**, 2026-07-30.
+Next: a **live data-plane run** to confirm the WireGuard handshake + return traffic and settle routing/DNS —
+`cargo run -p tern-core --example teleport_tunnel_probe -- <invite>` (needs `CAP_NET_ADMIN`); then drives over
+the tunnel. See [`TODO.md`](TODO.md) and [`WORKFLOWS.md`](WORKFLOWS.md). Baseline macOS-app fingerprint:
+**v4.1.1 (build 177)**, 2026-07-30.
 
 ```sh
-cargo test -p tern-core                 # 24 tests, incl. HTTP round-trips + full engine flow
+cargo test -p tern-core                 # incl. HTTP round-trips, engine flow, and the boringtun handshake
 cargo run -p tern-core --example flow   # watch sign-in → connect → selective auto-mount execute
 ./packaging/install-local.sh            # (on Linux) build + install ternd/tern/tern-gui into ~/.local
 ```
