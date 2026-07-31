@@ -17,8 +17,7 @@ use tokio::sync::Mutex;
 mod service;
 use service::TernService;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -26,9 +25,25 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    // Raise CAP_NET_ADMIN into inheritable+ambient BEFORE building the tokio runtime — ambient capabilities
+    // are per-thread, so raising here (on the main thread) means the runtime's worker threads inherit it when
+    // they're created. `on_thread_start` re-raises on every worker/blocking thread as belt-and-suspenders, so
+    // whichever thread ends up fork/exec'ing `ip`/`sysctl`/`resolvectl` carries the capability.
     #[cfg(target_os = "linux")]
     raise_ambient_net_admin();
 
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.enable_all();
+    #[cfg(target_os = "linux")]
+    builder.on_thread_start(|| {
+        use caps::{CapSet, Capability};
+        let _ = caps::raise(None, CapSet::Inheritable, Capability::CAP_NET_ADMIN);
+        let _ = caps::raise(None, CapSet::Ambient, Capability::CAP_NET_ADMIN);
+    });
+    builder.build()?.block_on(run())
+}
+
+async fn run() -> anyhow::Result<()> {
     let engine = Arc::new(Mutex::new(build_engine()));
 
     // Restore a saved session at startup, and honour "connect at startup" (before clients connect, so no
