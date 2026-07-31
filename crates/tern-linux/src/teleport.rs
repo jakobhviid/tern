@@ -218,6 +218,32 @@ mod tests {
         assert!(steps.iter().any(|s| s.args.first().map(String::as_str) == Some("addr") && s.args[2] == "10.2.0.5/32"));
     }
 
+    fn sh(script: &str, required: bool) -> Step {
+        Step { program: "sh", args: vec!["-c".into(), script.into()], required }
+    }
+
+    #[tokio::test]
+    async fn a_not_permitted_step_maps_to_privilege_required() {
+        // A required step failing with an EPERM-style message → the plain PrivilegeRequired, not RTNETLINK jargon.
+        let steps = vec![sh("echo 'RTNETLINK answers: Operation not permitted' >&2; exit 1", true)];
+        let err = run_steps(steps).await.unwrap_err();
+        assert!(matches!(err, tern_core::Error::PrivilegeRequired));
+    }
+
+    #[tokio::test]
+    async fn a_required_step_failure_that_isnt_a_permission_error_propagates() {
+        let steps = vec![sh("echo 'some other failure' >&2; exit 1", true)];
+        let err = run_steps(steps).await.unwrap_err();
+        assert!(!matches!(err, tern_core::Error::PrivilegeRequired));
+    }
+
+    #[tokio::test]
+    async fn best_effort_step_failures_do_not_fail_the_connect() {
+        // A best-effort step (e.g. a sysctl no-op) may fail without aborting; a following required step still runs.
+        let steps = vec![sh("exit 1", false), sh("exit 0", true)];
+        assert!(run_steps(steps).await.is_ok());
+    }
+
     #[test]
     fn a_route_matching_the_endpoint_subnet_is_skipped() {
         // client_ip shares the endpoint's /24 → no route for it (would loop the WireGuard underlay).
