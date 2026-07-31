@@ -419,6 +419,11 @@ fn build_ui(
                     // then the main view (Access + drives). See docs/09.
                     // Show the main view when signed in OR when a tunnel is up (an imported WireGuard config
                     // needs no sign-in); otherwise show the invite/import onboarding.
+                    // Known minor edge: a *stored* Teleport session that's currently disconnected (e.g. a
+                    // failed auto-reconnect after a restart) has auth=SignedOut + access=Off, so the window
+                    // shows onboarding — but the **tray** (the primary connect surface) reconnects it via its
+                    // Connect toggle. A clean fix would add a `has_console` flag to the Snapshot; deferred to
+                    // avoid churning the shared type for a rare, tray-covered case.
                     let show_main =
                         matches!(snap.auth, Auth::SignedIn(_)) || !matches!(snap.access, Access::Off);
                     invite_group.set_visible(!show_main);
