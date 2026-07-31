@@ -72,22 +72,21 @@ async fn main() -> anyhow::Result<()> {
 
 /// Raise `CAP_NET_ADMIN` into the **ambient** capability set so the helpers the Teleport backend execs
 /// (`ip`/`sysctl`/`resolvectl`) inherit it. The daemon carries the capability as a *file* capability
-/// (`setcap cap_net_admin+eip ternd`), which grants it to `ternd` itself but not to its children unless it's
-/// ambient. Best-effort: if the capability isn't present (setcap not run), the tunnel simply reports
-/// "privilege required" when the user tries to connect, rather than the daemon failing to start.
+/// (`setcap cap_net_admin+eip ternd`); that grants it to `ternd` itself (permitted+effective), but when a
+/// file-capability binary is exec'd the kernel leaves the *inheritable* set empty and clears ambient — so we
+/// must add `CAP_NET_ADMIN` to inheritable first (allowed because it's in our permitted set), then raise it
+/// into ambient. Best-effort: without the capability the tunnel reports "privilege required" rather than the
+/// daemon failing to start.
 #[cfg(target_os = "linux")]
 fn raise_ambient_net_admin() {
-    // prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_ADMIN, 0, 0). Succeeds only when CAP_NET_ADMIN is
-    // in both the permitted and inheritable sets (which `+eip` provides).
-    const PR_CAP_AMBIENT: libc::c_int = 47;
-    const PR_CAP_AMBIENT_RAISE: libc::c_ulong = 2;
-    const CAP_NET_ADMIN: libc::c_ulong = 12;
-    // SAFETY: prctl with these fixed arguments has no memory effects.
-    let rc = unsafe { libc::prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_ADMIN, 0, 0) };
-    if rc == 0 {
-        tracing::info!("raised ambient CAP_NET_ADMIN for tunnel setup helpers");
-    } else {
-        tracing::info!("CAP_NET_ADMIN not available (run `setcap cap_net_admin+eip` on ternd to enable the tunnel)");
+    use caps::{CapSet, Capability};
+    let cap = Capability::CAP_NET_ADMIN;
+    let inh = caps::raise(None, CapSet::Inheritable, cap);
+    let amb = inh.as_ref().ok().and(Some(())).map(|_| caps::raise(None, CapSet::Ambient, cap));
+    match (inh, amb) {
+        (Ok(()), Some(Ok(()))) => tracing::info!("raised CAP_NET_ADMIN into inheritable+ambient for tunnel helpers"),
+        (Err(e), _) => tracing::info!(error = %e, "CAP_NET_ADMIN not permitted — run `setcap cap_net_admin+eip` on ternd to enable the tunnel"),
+        (Ok(()), amb) => tracing::info!(?amb, "could not raise CAP_NET_ADMIN into the ambient set"),
     }
 }
 
