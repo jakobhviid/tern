@@ -8,9 +8,11 @@ Documentation=https://github.com/jakobhviid/tern
 After=graphical-session.target
 PartOf=graphical-session.target
 
-# The Teleport tunnel creates a TUN device in-process and so needs CAP_NET_ADMIN (ADR-0016). A systemd
-# --user service can't be granted ambient capabilities, so the capability is set as a *file* capability on
-# the binary instead: `sudo setcap cap_net_admin+ep ~/.local/bin/ternd` (install-local.sh does this).
+# The Teleport tunnel creates a TUN device and configures the interface, needing CAP_NET_ADMIN (ADR-0016). A
+# systemd --user service can't be granted ambient capabilities, so it's set as a *file* capability on the
+# binary — `sudo setcap cap_net_admin+eip ~/.local/bin/ternd` (install-local.sh does this) — with the
+# inheritable bit (`i`) so ternd can raise it into the ambient set at startup and its `ip`/`sysctl` helpers
+# inherit it.
 [Service]
 Type=dbus
 BusName=phd.hviid.Tern.Daemon

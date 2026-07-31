@@ -26,3 +26,5 @@ zbus.workspace = true
 # Real system backends only exist on Linux; other targets (macOS/CI build hosts) use the in-memory stub.
 [target.'cfg(target_os = "linux")'.dependencies]
 tern-linux = { path = "../tern-linux" }
+# For raising CAP_NET_ADMIN into the ambient set so execed helpers (ip/sysctl/resolvectl) inherit it.
+libc = "0.2"

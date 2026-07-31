@@ -20,10 +20,10 @@ install -m755 target/release/tern-gui "$BIN/tern-gui"
 # One-time, needs root; the tunnel simply won't come up without it (the daemon reports "privilege required").
 if command -v setcap >/dev/null 2>&1; then
   echo "==> Granting CAP_NET_ADMIN to ternd (for the Teleport TUN; needs sudo)…"
-  sudo setcap cap_net_admin+ep "$BIN/ternd" \
-    || echo "   (skipped — run 'sudo setcap cap_net_admin+ep $BIN/ternd' yourself to enable the tunnel)"
+  sudo setcap cap_net_admin+eip "$BIN/ternd" \
+    || echo "   (skipped — run 'sudo setcap cap_net_admin+eip $BIN/ternd' yourself to enable the tunnel)"
 else
-  echo "==> setcap not found — run 'sudo setcap cap_net_admin+ep $BIN/ternd' to enable the Teleport tunnel."
+  echo "==> setcap not found — run 'sudo setcap cap_net_admin+eip $BIN/ternd' to enable the Teleport tunnel."
 fi
 
 install -Dm644 packaging/phd.hviid.Tern.desktop \
@@ -57,10 +57,10 @@ Installed to ~/.local. Next:
   systemctl --user enable --now tern.service   # start the background service
   tern status                                  # should print "Not signed in"
   tern-gui                                      # window + top-bar tray
-  tern connect --invite <teleport.ui.link/…>   # redeem a Teleport invite and bring up the tunnel
+  tern redeem <teleport.ui.link/…>             # redeem a Teleport invite and bring up the tunnel
 
 If the tunnel reports "privilege required", grant the capability the Teleport TUN needs:
-  sudo setcap cap_net_admin+ep ~/.local/bin/ternd  &&  systemctl --user restart tern.service
+  sudo setcap cap_net_admin+eip ~/.local/bin/ternd  &&  systemctl --user restart tern.service
 
 GNOME needs the "AppIndicator and KStatusNotifierItem Support" extension for the tray icon.
 Make sure ~/.local/bin is on your PATH.
