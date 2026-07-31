@@ -244,12 +244,15 @@ impl Engine {
         let json = serde_json::to_string(&session)
             .map_err(|e| Error::Other(anyhow::anyhow!("couldn't serialize the session: {e}")))?;
         self.secrets.set(TELEPORT_SESSION_KEY, &json).await?;
+        // Remember the session (persisted + in-memory) BEFORE bringing the tunnel up, so a failed bring-up —
+        // a transient error, or CAP_NET_ADMIN not yet granted — is retryable with `connect`/the Access toggle
+        // and doesn't burn the single-use invite. Pairing already succeeded; only the data plane failed.
+        self.teleport_session = Some(session.clone());
         self.teleport.up(&session).await?;
         if !self.teleport.is_up().await? {
             self.access = Access::Unreachable;
             return Err(Error::VpnUnreachable);
         }
-        self.teleport_session = Some(session);
         self.access = Access::On;
         Ok(())
     }
@@ -574,6 +577,27 @@ mod tests {
         assert!(matches!(err, Error::PrivilegeRequired));
         // Must not be left on "Turning on…".
         assert_eq!(engine.snapshot().await.access, Access::Off);
+    }
+
+    #[tokio::test]
+    async fn a_failed_bring_up_keeps_the_session_for_retry_without_a_new_invite() {
+        let server = MockServer::start().await;
+        let ucs = UcsClient::new(Endpoints { sso: "https://sso.ui.com".into(), api_gw: server.uri() });
+        let stub = Arc::new(StubBackend::new());
+        let mut engine = Engine::new(
+            ucs,
+            stub.clone(),
+            Arc::new(FailingTeleport),
+            stub.clone(),
+            stub.clone(),
+            stub.clone(),
+            Config::default(),
+        );
+        // Pairing succeeds (invite consumed) but the data plane fails to come up.
+        assert!(matches!(engine.redeem_invite(INVITE_UUID).await, Err(Error::PrivilegeRequired)));
+        // The session is retained — persisted AND in memory — so `connect` retries without a fresh invite.
+        assert!(engine.secrets.get(TELEPORT_SESSION_KEY).await.unwrap().is_some());
+        assert!(engine.teleport_session.is_some());
     }
 
     #[tokio::test]
