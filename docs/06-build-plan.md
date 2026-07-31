@@ -14,11 +14,15 @@ being built on macOS but targets Linux/GNOME (Bazzite) — some layers can be pr
 | M4 | `tern-linux`: NetworkManager/GVfs/keyring backends via CLIs (nmcli/gio/secret-tool) | ✅ built | compiles on macOS; runs on Bazzite. D-Bus port needed for Flatpak (ADR-0014) |
 | M5 | `tern-gui`: GTK4/libadwaita window + **ksni tray** + live D-Bus updates | ✅ built | window + tray **compiled/linked against real gtk4 on macOS** *and Ubuntu CI*; runtime-verify on Bazzite |
 | M6 | Packaging: systemd unit, D-Bus activation, desktop, AppStream, icon, Flatpak manifest, `install-local.sh` | 🟡 scaffolded | offline cargo-sources + release CI + tap template pending (Linux/CI) |
-| M7 | Real-account validation: confirm UCS shapes + pin SSO authorize/token URLs + `client_id` by capture | ⏳ | Bazzite + owner creds |
+| M7 | Real-account validation: confirm UCS shapes + pin SSO authorize/token URLs + `client_id` by capture | 🟠 superseded | The consumer path is **Teleport**, not UCS/SSO — see M8 + ADR-0016 |
+| M8 | **Teleport data plane** (ADR-0016): invite → broker pairing → ICE/STUN nomination → userspace WireGuard (boringtun) over a TUN; `TeleportVpn` backend + engine lifecycle + CLI/GUI/tray/packaging | 🟡 built; control plane validated **live**, data-plane run pending | control plane + pure logic on macOS/CI; data plane needs `CAP_NET_ADMIN` on Bazzite |
 
 ### Remaining before "usable on Bazzite" — see [`07-bazzite-bringup.md`](07-bazzite-bringup.md)
-- **Browser+loopback SSO** (ADR-0009) — **built + tested** (`tern_core::auth`, `StartSignIn`, `tern login`, GUI
-  button). Only the UniFi authorize/token URLs + `client_id` need pinning from the M7 capture.
+- **Teleport live data-plane run** (M8, the primary path) — confirm the WireGuard handshake + return traffic
+  through the TUN (`teleport_tunnel_probe`, needs `CAP_NET_ADMIN`), then settle routing/DNS and drives over the
+  tunnel. Control plane (invite → session → ICE → connect → nomination) is already validated live.
+- **Browser+loopback SSO** (ADR-0009) — built + tested, but the *account* route; a plain consumer account uses
+  Teleport instead (M7 superseded).
 - **Runtime bring-up on Bazzite** — `./packaging/install-local.sh`, `systemctl --user enable --now tern.service`,
   run the GUI/tray, then iterate the nmcli/gio/secret-tool backends against the real system.
 - **Flatpak** — port the VPN backend to D-Bus (ADR-0014) + generate `cargo-sources.json`, then build the manifest.
@@ -28,7 +32,8 @@ NM state monitoring).
 
 ## What's proven on the Mac right now (M1)
 
-`cargo test -p tern-core` → 23 tests green (incl. wiremock HTTP round-trips + full engine flow).
+`cargo test -p tern-core` → 63 tests green (incl. wiremock HTTP round-trips, the full engine flow, a boringtun
+handshake round-trip, and the Teleport nomination sequence).
 `cargo run -p tern-core --example flow` → runs sign-in → provision → connect → **selective auto-mount** →
 disconnect, and prints the plain-language UX + error rendering. No display, D-Bus, or UniFi account needed.
 
