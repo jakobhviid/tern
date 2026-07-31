@@ -122,6 +122,9 @@ needs a **one-time privilege grant** (`setcap cap_net_admin` on the daemon, or `
    `128.0.0.0/1` (or an fwmark + `suppress_prefixlength` rule). Split-tunnel (LAN-only) is the safer first target:
    route just the console's LAN subnet(s). DNS = `resolvectl dns tern0 <dns_addrs>` + `domain tern0 ~.` once routes
    carry the DNS server. All of this belongs in `tern-linux::teleport` `up()` (iproute2), gated on the live model.
+   **First step when broadening routes:** run a redeem with `RUST_LOG=debug` and read the logged raw broker
+   response — if the console advertises remote routes/subnets, route *those* (authoritative) instead of guessing;
+   and when broadening, skip any `/24` the host is *locally* on (multi-homed) so local traffic isn't diverted.
 7. **⬜ (Later) off-LAN validation** — run from a remote network to exercise the reflexive/TURN path (the live
    validation so far was on-LAN, so only the direct candidate was tested).
 
