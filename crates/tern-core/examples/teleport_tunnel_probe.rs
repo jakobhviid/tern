@@ -20,6 +20,8 @@ use tern_core::wg;
 use tokio::net::UdpSocket;
 
 const IFACE: &str = "tern0";
+/// Where a paired session is saved for reuse — persistent across sudo sessions (unlike `/run/user/0`).
+const SESSION_PATH: &str = "/tmp/tern-teleport-session.json";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -31,10 +33,12 @@ async fn main() -> anyhow::Result<()> {
         Ok(invite) => {
             println!("pairing invite {} (this consumes it)…", invite.id);
             let s = broker.pair(&invite, "tern").await?;
-            let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-            let path = format!("{dir}/tern-teleport-session.json");
-            std::fs::write(&path, serde_json::to_string(&s)?)?;
-            println!("✓ paired; session saved → {path}");
+            // A fixed /tmp path (not $XDG_RUNTIME_DIR) — under sudo that's /run/user/0, which systemd wipes
+            // when root's login session ends between calls, losing the reusable session.
+            let path = SESSION_PATH;
+            std::fs::write(path, serde_json::to_string(&s)?)?;
+            let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600));
+            println!("✓ paired; session saved → {path} (reuse it, no new invite needed)");
             s
         }
         Err(_) => {
