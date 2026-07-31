@@ -487,6 +487,23 @@ mod tests {
     }
 
     #[test]
+    fn stun_server_picks_the_first_stun_url_stripping_query_and_falls_back() {
+        let server = |urls: &[&str]| IceServer {
+            urls: urls.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        // First stun: URL wins; a ?transport=… query is stripped; turn: URLs are skipped.
+        let ice = vec![
+            server(&["turn:turn.example.com:3478?transport=udp"]),
+            server(&["stun:stun.example.com:3478?transport=udp", "stun:other:3478"]),
+        ];
+        assert_eq!(stun_server(&ice), "stun.example.com:3478");
+        // No stun: URL anywhere → the Cloudflare fallback.
+        assert_eq!(stun_server(&[server(&["turn:only.example.com:3478"])]), "stun.cloudflare.com:3478");
+        assert_eq!(stun_server(&[]), "stun.cloudflare.com:3478");
+    }
+
+    #[test]
     fn parses_url_with_query_and_whitespace() {
         // Firebase appends `?l=1`; users paste with stray spaces/newlines.
         let pasted = format!("  https://teleport.ui.link/{UUID}?l=1\n");
