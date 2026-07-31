@@ -87,10 +87,15 @@ needs a **one-time privilege grant** (`setcap cap_net_admin` on the daemon, or `
    down + forget, `restore_teleport_session` on startup. Wired through `ternd` (`redeem_invite` D-Bus method +
    startup restore), the CLI (`tern redeem`/`tern import`), and the GUI (invite paste → `RedeemInvite`; tray
    connect/disconnect; console web-UI link). Packaging grants `CAP_NET_ADMIN` via `setcap` (systemd --user can't).
-   **Still open:** routing, DNS, and the drives path (`gvfs.rs`, SMB over the tunnel). These want the live
-   data-plane confirmation first (the `teleport_tunnel_probe` sudo run) — the backend stays **address-only** until
-   then, because a wrong `0.0.0.0/0 dev tern0` would black-hole the host's network, and that must be added under
-   supervision, not on an unattended machine.
+   **DATA PLANE VALIDATED LIVE (2026-07-31):** a real DNS query to the remote server answered through the
+   tunnel — invite → nomination → WireGuard handshake → bidirectional encrypted app traffic all confirmed. The
+   backend now does the full confirmed configuration (`configure_steps`, unit-tested): assign the v6 overlay **and**
+   the v4 `client_ip`, clear `disable_ipv6`, loosen `rp_filter`, and route the remote v4 `/24`s (from `client_ip` +
+   `dns`) **excluding** the underlay endpoint's `/24`; DNS via `resolvectl` (best-effort). ternd raises ambient
+   `CAP_NET_ADMIN` so its `ip`/`sysctl` helpers inherit it (`setcap cap_net_admin+eip`). Note: `ping` shows 0%
+   here (ICMP raw-socket quirk on the overlapping internal network) but real UDP/TCP traffic flows.
+   **Still open:** **full-tunnel** routing (today is split-tunnel to the derived `/24`s — reaches the DNS + client
+   subnets, not arbitrary remote VLANs), and the **drives** path (`gvfs.rs`, SMB over the tunnel).
    **Inferred routing plan** (from docs/02: *full-tunnel by default, client receives routes, the console/gateway
    SNATs* — confirm against the probe's `client_ip`/`dns`/`udp_echo` output): the console assigns a v6 ULA overlay
    (`fd37::x/120`) **and** a v4 `client_ip`; assign *both* to `tern0`, then for full-tunnel add `0.0.0.0/0` +
