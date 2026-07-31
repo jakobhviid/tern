@@ -91,6 +91,10 @@ impl TernService {
         url: String,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> String {
+        // Show "Turning on Access…" before the several-second pairing + nomination, like start_sign_in does
+        // for the browser flow — otherwise the UI would sit unchanged until the tunnel is fully up.
+        self.engine.lock().await.begin_connecting();
+        self.emit_changed(&emitter).await;
         let res = self.engine.lock().await.redeem_invite(&url).await;
         self.finish(res, &emitter).await
     }

@@ -107,6 +107,13 @@ impl Engine {
         self.auth = Auth::SigningIn;
     }
 
+    /// Mark that a tunnel is coming up (shown as "Turning on Access…"), so the daemon can emit that state
+    /// before the several-second bring-up (pairing + nomination) rather than looking frozen until it lands.
+    /// The subsequent `redeem_invite`/`connect` sets the real terminal state.
+    pub fn begin_connecting(&mut self) {
+        self.access = Access::TurningOn;
+    }
+
     /// Roll back to signed-out if a sign-in attempt failed or was cancelled.
     pub fn cancel_sign_in(&mut self) {
         if matches!(self.auth, Auth::SigningIn) {
