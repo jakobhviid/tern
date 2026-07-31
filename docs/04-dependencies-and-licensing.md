@@ -72,6 +72,20 @@
 **Golden rules:** (1) never in-process-link sing-box or libsmbclient; (2) dynamically link the LGPL GNOME
 stack; (3) prefer relm4/iced over Slint. → app is cleanly MIT/Apache-licensable and packageable everywhere.
 
+## In use: the Teleport data-plane crates (ADR-0016)
+
+What the built data plane actually links, and how each stays inside the `deny.toml` allow-list:
+
+| Crate | Role | License | Note |
+|---|---|---|---|
+| **boringtun 0.7** | Userspace WireGuard (Noise + transport) | **BSD-3-Clause** | 0.6 hard-pins an rc `x25519-dalek`; 0.7 is clean. |
+| **ring 0.17** | Crypto primitives (pulled by boringtun 0.7) | **Apache-2.0 AND ISC** | *Not new, not OpenSSL:* our rustls stack already links it as its provider. The OpenSSL/native-tls **ban** targets TLS backends; ring is Apache/ISC and allowed. |
+| **tun-rs 2.x** | TUN device (`async_tokio`) | **MIT / Apache-2.0** | Chosen over the `tun` crate, which is **WTFPL** (not on the allow-list). |
+| ip_network, ip_network_table | boringtun deps | **BSD-2-Clause** | Added `BSD-2-Clause` to the allow-list — same permissive family as the already-allowed BSD-1/3. |
+
+Net: no GPL/copyleft, no OpenSSL/native-tls — `cargo deny check licenses bans sources` stays green. The
+allow-list gained only `BSD-2-Clause`; the bans list is unchanged.
+
 ## Packaging availability (summary)
 - **Homebrew (macOS + Linuxbrew):** `sing-box`, `wireguard-go`, `wireguard-tools`, `boringtun`, `samba`,
   `libsecret`, `gtk4`, `libadwaita` all in core with bottles. **Gap: `cifs-utils`** (Linux-kernel helper; get
