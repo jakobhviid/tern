@@ -87,6 +87,26 @@ fn configure_steps(address: IpAddr, prefix: u8, client_ip: Option<Ipv4Addr>, dns
     steps
 }
 
+/// Run the required interface-setup steps in order (best-effort steps never fail the connect). A capability
+/// failure surfaces as EPERM from netlink (`... Operation not permitted`); map it to the plain
+/// [`tern_core::Error::PrivilegeRequired`] ("needs permission" → run setcap) rather than leaking `RTNETLINK`
+/// jargon to the user.
+async fn run_steps(steps: Vec<Step>) -> Result<()> {
+    for step in steps {
+        let argv: Vec<&str> = step.args.iter().map(String::as_str).collect();
+        let res = cmd::run(step.program, &argv).await;
+        if step.required {
+            if let Err(e) = res {
+                if e.to_string().contains("not permitted") {
+                    return Err(tern_core::Error::PrivilegeRequired);
+                }
+                return Err(e);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Runs the in-process Teleport data plane and owns the live tunnel.
 pub struct TeleportVpnBackend {
     broker: Broker,
@@ -116,12 +136,13 @@ impl TeleportVpn for TeleportVpnBackend {
         self.down().await?;
         let conn: Connection = teleport::establish(&self.broker, session, IFACE).await?;
 
-        for step in configure_steps(conn.tunnel.address, conn.tunnel.prefix, conn.client_ip, &conn.dns, conn.endpoint.ip()) {
-            let argv: Vec<&str> = step.args.iter().map(String::as_str).collect();
-            let run = cmd::run(step.program, &argv).await;
-            if step.required {
-                run?;
-            }
+        // Configure the interface; if any required step fails, tear the *just-created* tunnel down (it isn't
+        // stored yet, so stop it directly — otherwise the pump/TUN would leak) and report.
+        let steps = configure_steps(conn.tunnel.address, conn.tunnel.prefix, conn.client_ip, &conn.dns, conn.endpoint.ip());
+        if let Err(e) = run_steps(steps).await {
+            conn.tunnel.stop().await;
+            let _ = cmd::status_ok("ip", &["link", "delete", IFACE]).await;
+            return Err(e);
         }
 
         // DNS through the tunnel (best-effort — needs systemd-resolved; connectivity by IP works without it).
