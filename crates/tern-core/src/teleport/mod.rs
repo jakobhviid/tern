@@ -307,6 +307,9 @@ impl Broker {
         if text.trim().is_empty() {
             return Ok(BrokerResponse::default());
         }
+        // Debug-only: the raw body (all fields, including any the struct drops). Off by default; enable with
+        // RUST_LOG=debug to discover e.g. whether the console advertises remote routes/subnets for routing.
+        tracing::debug!(body = %text, "teleport broker response");
         serde_json::from_str(&text).map_err(|e| Error::Http(e.to_string()))
     }
 
