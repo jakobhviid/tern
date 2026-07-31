@@ -131,6 +131,14 @@ async fn main() -> anyhow::Result<()> {
         println!("routed remote v4 subnets via {IFACE}: {}", routed.join(", "));
     }
 
+    // The console's decrypted replies reach tern0 but can be dropped by the host's input path before the app
+    // sees them — Bazzite runs firewalld (a fresh interface lands in the untrusted default zone) and rp_filter
+    // may apply. Loosen both for tern0 so the probe measures genuine app connectivity. (Runtime-only; the
+    // real backend will do this more surgically.)
+    run("sysctl", &["-w", "net.ipv4.conf.all.rp_filter=2"]);
+    run("sysctl", &["-w", &format!("net.ipv4.conf.{IFACE}.rp_filter=0")]);
+    run("firewall-cmd", &["--zone=trusted", "--add-interface", IFACE]);
+
     // Wait for the WireGuard handshake (polling the pump's live stats), then run the console's own health
     // check — a UDP echo through the tunnel — routing the echo target via the interface first.
     print!("waiting for the WireGuard handshake");
