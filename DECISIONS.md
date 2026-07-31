@@ -284,6 +284,21 @@ surfaced through `ternd` (`redeem_invite` + startup restore), the CLI (`tern red
 tray. The daemon gets `CAP_NET_ADMIN` from a **file capability** (`setcap cap_net_admin+ep`), since a systemd
 `--user` unit can't be granted ambient caps. **Live confirmation of the data plane (handshake + return traffic)
 and richer routing/DNS remain open** — deliberately not guessed at before the sudo probe run.
+**VALIDATED LIVE — full data plane (2026-07-31) 🟢:** a real **DNS query to the remote DNS server answered
+through the tunnel** (decrypted UDP response observed on `tern0`), end-to-end: invite → pairing → ICE
+nomination → WireGuard handshake → bidirectional encrypted **app traffic**. Addressing model the console uses:
+a v6 ULA overlay (`fd37::/…`, /120) **and** a v4 `client_ip` on its LAN; remote v4 subnets reached *through*
+the tunnel; the ICE-nominated underlay endpoint's own /24 must not be routed in (loop). Note: `ping` reads 0%
+here — an ICMP raw-socket quirk on an overlapping internal network (the ICMP replies *do* arrive on `tern0`,
+`RX packets>0, dropped 0`) — but UDP/TCP app traffic flows; the data plane is sound.
+**Daemon capability handling (the non-obvious part):** the backend execs `ip`/`sysctl`/`resolvectl` (in-process
+netlink is SELinux-denied). ternd carries `CAP_NET_ADMIN` as a **file capability** (`setcap cap_net_admin+eip`,
+inheritable bit required). A file cap grants the daemon itself the cap but, on exec of a file-cap binary, the
+kernel leaves the process **inheritable set empty** and **clears ambient** — so children get nothing. Fix:
+(1) add `CAP_NET_ADMIN` to the process *inheritable* set (allowed since it's permitted), then raise it into
+*ambient*, via the `caps` crate; (2) do this **before building the tokio runtime** (ambient is per-thread, so
+raising after `#[tokio::main]` misses the already-spawned worker that fork/execs `ip`) **and** in
+`on_thread_start` on every worker/blocking thread. EPERM from a setup step maps to `PrivilegeRequired`.
 **Revisit if:** Ubiquiti fully retires the Teleport/MQTT signaling for consumer accounts (then only the doc-08
 chain remains — port data plane, RE the control plane), or a directly-dialable path (ADR-0004 fallback) turns out
 to cover the owner's real need (then this large port may be unnecessary for *this* user).
