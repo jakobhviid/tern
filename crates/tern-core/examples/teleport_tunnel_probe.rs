@@ -201,6 +201,16 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Host-side diagnostics: is our address on the interface, which way does the kernel route the target,
+    // and did the interface actually receive the injected replies (RX counters)?
+    println!("\n--- host diagnostics ---");
+    sh("ip", &["addr", "show", IFACE]);
+    sh("ip", &["route", "get", &resp.dns_addrs.first().cloned().unwrap_or_else(|| "192.168.1.1".into())]);
+    sh("ip", &["-s", "link", "show", IFACE]);
+    // ICMP input counters (header + values): if InEchoReps grew by ~3, the kernel received the replies and
+    // it's a ping-socket issue; if not, they were dropped before ICMP (routing/martian).
+    sh("sh", &["-c", "grep '^Icmp' /proc/net/snmp"]);
+
     let returned = s.rx_bytes.load(Ordering::Relaxed) > 0 || s.tun_out.load(Ordering::Relaxed) > 0;
     if v4_ok || echo_ok || (handshook && returned) {
         println!("\nRESULT: ✅ Teleport tunnel WORKS end-to-end (handshake + return traffic through the data plane).");
@@ -230,6 +240,19 @@ async fn udp_echo(src: IpAddr, dst: SocketAddr) -> bool {
     }
     let mut buf = [0u8; 64];
     matches!(tokio::time::timeout(Duration::from_secs(3), sock.recv_from(&mut buf)).await, Ok(Ok((n, _))) if n > 0)
+}
+
+/// Run a diagnostic command and print its output (indented), for the host-diagnostics section.
+fn sh(cmd: &str, args: &[&str]) {
+    println!("$ {cmd} {}", args.join(" "));
+    match Command::new(cmd).args(args).output() {
+        Ok(o) => {
+            for line in String::from_utf8_lossy(&o.stdout).lines().chain(String::from_utf8_lossy(&o.stderr).lines()) {
+                println!("    {line}");
+            }
+        }
+        Err(e) => println!("    (failed: {e})"),
+    }
 }
 
 fn run(cmd: &str, args: &[&str]) {
