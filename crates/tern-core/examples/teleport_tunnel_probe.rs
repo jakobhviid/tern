@@ -192,6 +192,14 @@ async fn main() -> anyhow::Result<()> {
         s.tun_in.load(Ordering::Relaxed), s.tun_out.load(Ordering::Relaxed),
         s.tx_bytes.load(Ordering::Relaxed), s.rx_bytes.load(Ordering::Relaxed)
     );
+    if let Ok(samples) = s.inbound_samples.lock() {
+        if !samples.is_empty() {
+            println!("decrypted inbound packets (what the console actually sent back):");
+            for line in samples.iter() {
+                println!("    {line}");
+            }
+        }
+    }
 
     let returned = s.rx_bytes.load(Ordering::Relaxed) > 0 || s.tun_out.load(Ordering::Relaxed) > 0;
     if v4_ok || echo_ok || (handshook && returned) {

@@ -7,9 +7,9 @@
 //! module never execs a privileged helper. Routing (which traffic enters the tunnel) is layered on top by the
 //! backend; here we only own the interface address, the crypto, and the packet pump.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -73,6 +73,33 @@ pub struct Stats {
     /// boringtun's transport byte counters (encrypted payload).
     pub tx_bytes: AtomicU64,
     pub rx_bytes: AtomicU64,
+    /// One-line summaries of the first few decrypted inbound packets (for diagnosing "traffic returns but the
+    /// app doesn't see it" — what src→dst/proto the console actually sends back).
+    pub inbound_samples: Mutex<Vec<String>>,
+}
+
+/// A one-line `src → dst proto (len)` summary of an IP packet, for the diagnostic sample log.
+fn describe_ip(pkt: &[u8]) -> String {
+    let proto = |p: u8| match p {
+        1 => "icmp".to_string(),
+        6 => "tcp".to_string(),
+        17 => "udp".to_string(),
+        58 => "icmpv6".to_string(),
+        other => other.to_string(),
+    };
+    match pkt.first().map(|b| b >> 4) {
+        Some(4) if pkt.len() >= 20 => {
+            let s = Ipv4Addr::new(pkt[12], pkt[13], pkt[14], pkt[15]);
+            let d = Ipv4Addr::new(pkt[16], pkt[17], pkt[18], pkt[19]);
+            format!("v4 {s} → {d} {} ({}B)", proto(pkt[9]), pkt.len())
+        }
+        Some(6) if pkt.len() >= 40 => {
+            let s = Ipv6Addr::from(<[u8; 16]>::try_from(&pkt[8..24]).unwrap());
+            let d = Ipv6Addr::from(<[u8; 16]>::try_from(&pkt[24..40]).unwrap());
+            format!("v6 {s} → {d} {} ({}B)", proto(pkt[6]), pkt.len())
+        }
+        _ => format!("? ({}B)", pkt.len()),
+    }
 }
 
 /// A running Teleport tunnel: a background task pumping packets between the socket and the TUN device, plus
@@ -226,6 +253,11 @@ async fn pump(
                         }
                         TunnResult::WriteToTunnelV4(p, _) | TunnResult::WriteToTunnelV6(p, _) => {
                             stats.tun_out.fetch_add(1, Ordering::Relaxed);
+                            if let Ok(mut samples) = stats.inbound_samples.lock() {
+                                if samples.len() < 8 {
+                                    samples.push(describe_ip(p));
+                                }
+                            }
                             let _ = device.send(p).await;
                             break;
                         }
