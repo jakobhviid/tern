@@ -4,14 +4,20 @@
 //! in-process netlink address step is denied under SELinux even as root, whereas `ip` runs in its own
 //! context and carries the daemon's `CAP_NET_ADMIN`. Bringing the tunnel up therefore needs that capability
 //! (granted once via `setcap` on the daemon).
+//!
+//! The addressing/routing was validated live against a real console: the console assigns a v6 ULA overlay
+//! (`fd37::/…`) **and** a v4 `client_ip` on its LAN; the remote v4 subnets are reached *through* the tunnel,
+//! while the ICE-nominated underlay endpoint's own subnet is the local transport path and must never be
+//! routed into the TUN (that would loop the WireGuard packets).
 
-use std::net::IpAddr;
+use std::collections::HashSet;
+use std::net::{IpAddr, Ipv4Addr};
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use tern_core::backend::TeleportVpn;
-use tern_core::teleport::{self, dataplane::Tunnel, Broker, Invite, Session};
+use tern_core::teleport::{self, Broker, Connection, Invite, Session};
 use tern_core::Result;
 
 use crate::cmd;
@@ -19,43 +25,72 @@ use crate::cmd;
 /// The TUN interface name for the Teleport tunnel.
 const IFACE: &str = "tern0";
 
-/// One iproute2/sysctl step: the program, its args, and whether it must succeed (`ip` address/link) or is
-/// best-effort (`sysctl` toggling `disable_ipv6`).
+/// One iproute2/sysctl step: the program, its args, and whether it must succeed (`ip` address/link/route) or
+/// is best-effort (`sysctl` toggles that may legitimately be no-ops on some hosts).
 struct Step {
     program: &'static str,
     args: Vec<String>,
     required: bool,
 }
 
-/// The command sequence to configure `tern0` for `address/prefix`. **Ordering matters** (learned against a
-/// live console): bring the link up, then for an IPv6 ULA overlay clear the per-interface `disable_ipv6`
-/// (fresh TUN interfaces reject IPv6 addresses otherwise), then assign the address. Pure + unit-tested so the
-/// order can't silently regress.
-fn interface_setup(address: IpAddr, prefix: u8) -> Vec<Step> {
-    let mut steps = vec![Step {
-        program: "ip",
-        args: vec!["link".into(), "set".into(), IFACE.into(), "up".into()],
-        required: true,
-    }];
+fn ip(args: &[&str]) -> Step {
+    Step { program: "ip", args: args.iter().map(|s| s.to_string()).collect(), required: true }
+}
+
+fn sysctl(kv: String) -> Step {
+    Step { program: "sysctl", args: vec!["-w".into(), kv], required: false }
+}
+
+/// The `/24` containing `a`, as an `ip route` CIDR.
+fn slash24(a: Ipv4Addr) -> String {
+    let o = a.octets();
+    format!("{}.{}.{}.0/24", o[0], o[1], o[2])
+}
+
+/// The full command sequence to configure `tern0` from a connection's addressing. **Ordering matters**
+/// (learned live): link up → clear per-interface `disable_ipv6` for a v6 overlay (fresh TUN interfaces reject
+/// v6 addresses otherwise) → assign the v6 address → assign the v4 `client_ip` → loosen `rp_filter` so the
+/// host doesn't drop the tunnel's return traffic → route the remote v4 `/24`s (from `client_ip` + `dns`),
+/// **excluding** the underlay endpoint's `/24`. Pure + unit-tested so the order/exclusion can't regress.
+fn configure_steps(address: IpAddr, prefix: u8, client_ip: Option<Ipv4Addr>, dns: &[IpAddr], endpoint: IpAddr) -> Vec<Step> {
+    let mut steps = vec![ip(&["link", "set", IFACE, "up"])];
     if address.is_ipv6() {
-        steps.push(Step {
-            program: "sysctl",
-            args: vec!["-w".into(), format!("net.ipv6.conf.{IFACE}.disable_ipv6=0")],
-            required: false,
-        });
+        steps.push(sysctl(format!("net.ipv6.conf.{IFACE}.disable_ipv6=0")));
     }
-    steps.push(Step {
-        program: "ip",
-        args: vec!["addr".into(), "add".into(), format!("{address}/{prefix}"), "dev".into(), IFACE.into()],
-        required: true,
-    });
+    steps.push(ip(&["addr", "add", &format!("{address}/{prefix}"), "dev", IFACE]));
+    if let Some(v4) = client_ip {
+        steps.push(ip(&["addr", "add", &format!("{v4}/32"), "dev", IFACE]));
+    }
+    // Keep the host from dropping the tunnel's decrypted return traffic: loose reverse-path globally, off on
+    // the tunnel interface. (Best-effort; needs CAP_NET_ADMIN, which the daemon has.)
+    steps.push(sysctl("net.ipv4.conf.all.rp_filter=2".into()));
+    steps.push(sysctl(format!("net.ipv4.conf.{IFACE}.rp_filter=0")));
+
+    // Route the remote v4 subnets through the tunnel, never the underlay endpoint's own /24.
+    let endpoint_net = match endpoint {
+        IpAddr::V4(v4) => Some(slash24(v4)),
+        _ => None,
+    };
+    let mut targets: Vec<Ipv4Addr> = client_ip.into_iter().collect();
+    targets.extend(dns.iter().filter_map(|d| match d {
+        IpAddr::V4(v4) => Some(*v4),
+        _ => None,
+    }));
+    let mut seen: HashSet<String> = HashSet::new();
+    for t in targets {
+        let net = slash24(t);
+        if Some(&net) == endpoint_net.as_ref() || !seen.insert(net.clone()) {
+            continue;
+        }
+        steps.push(ip(&["route", "replace", &net, "dev", IFACE]));
+    }
     steps
 }
 
 /// Runs the in-process Teleport data plane and owns the live tunnel.
 pub struct TeleportVpnBackend {
     broker: Broker,
-    tunnel: Mutex<Option<Tunnel>>,
+    tunnel: Mutex<Option<teleport::dataplane::Tunnel>>,
 }
 
 impl TeleportVpnBackend {
@@ -79,18 +114,26 @@ impl TeleportVpn for TeleportVpnBackend {
     async fn up(&self, session: &Session) -> Result<()> {
         // Replace any tunnel already up (idempotent reconnect).
         self.down().await?;
-        let tunnel = teleport::establish(&self.broker, session, IFACE).await?;
+        let conn: Connection = teleport::establish(&self.broker, session, IFACE).await?;
 
-        // Configure the interface with iproute2 (see interface_setup for the ordering rationale).
-        for step in interface_setup(tunnel.address, tunnel.prefix) {
+        for step in configure_steps(conn.tunnel.address, conn.tunnel.prefix, conn.client_ip, &conn.dns, conn.endpoint.ip()) {
             let argv: Vec<&str> = step.args.iter().map(String::as_str).collect();
             let run = cmd::run(step.program, &argv).await;
             if step.required {
                 run?;
-            } // best-effort steps (disable_ipv6) may legitimately fail on hosts where it's already clear.
+            }
         }
 
-        *self.tunnel.lock().await = Some(tunnel);
+        // DNS through the tunnel (best-effort — needs systemd-resolved; connectivity by IP works without it).
+        if !conn.dns.is_empty() {
+            let mut args = vec!["dns".to_string(), IFACE.to_string()];
+            args.extend(conn.dns.iter().map(|d| d.to_string()));
+            let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+            let _ = cmd::run("resolvectl", &argv).await;
+            let _ = cmd::run("resolvectl", &["domain", IFACE, "~."]).await;
+        }
+
+        *self.tunnel.lock().await = Some(conn.tunnel);
         Ok(())
     }
 
@@ -98,7 +141,8 @@ impl TeleportVpn for TeleportVpnBackend {
         if let Some(tunnel) = self.tunnel.lock().await.take() {
             tunnel.stop().await;
         }
-        // The TUN interface disappears when its fd closes; delete defensively in case a prior run leaked it.
+        // The TUN interface disappears when its fd closes (taking its addresses/routes with it); delete
+        // defensively in case a prior run leaked it.
         let _ = cmd::status_ok("ip", &["link", "delete", IFACE]).await;
         Ok(())
     }
@@ -112,26 +156,57 @@ impl TeleportVpn for TeleportVpnBackend {
 mod tests {
     use super::*;
 
-    #[test]
-    fn ipv4_setup_brings_the_link_up_then_assigns_the_address() {
-        let steps = interface_setup("10.2.0.5".parse().unwrap(), 32);
-        assert_eq!(steps.len(), 2);
-        assert_eq!((steps[0].program, steps[0].args.as_slice()), ("ip", ["link", "set", IFACE, "up"].map(String::from).as_slice()));
-        assert_eq!(steps[1].program, "ip");
-        assert_eq!(steps[1].args, ["addr", "add", "10.2.0.5/32", "dev", IFACE]);
-        assert!(steps.iter().all(|s| s.required)); // no sysctl step for IPv4
+    fn progs(steps: &[Step]) -> Vec<(&str, Vec<&str>)> {
+        steps.iter().map(|s| (s.program, s.args.iter().map(String::as_str).collect())).collect()
     }
 
     #[test]
-    fn ipv6_setup_clears_disable_ipv6_between_link_up_and_the_address() {
-        let steps = interface_setup("fd37:5753:430c:4aee:b66a:e44d:1c00:2".parse().unwrap(), 120);
-        assert_eq!(steps.len(), 3);
-        assert_eq!(steps[0].args.last().unwrap(), "up"); // link up first
-        // disable_ipv6 must come BEFORE the address, and be best-effort.
-        assert_eq!(steps[1].program, "sysctl");
-        assert!(steps[1].args[1].ends_with("disable_ipv6=0"));
-        assert!(!steps[1].required);
-        assert_eq!(steps[2].args[0], "addr"); // address last
-        assert!(steps[2].args.contains(&"fd37:5753:430c:4aee:b66a:e44d:1c00:2/120".to_string()));
+    fn ipv6_overlay_with_v4_client_ip_and_routes() {
+        // The live-confirmed shape: v6 tunnel + v4 client_ip 192.168.2.11, DNS 192.168.1.1, underlay on
+        // 192.168.8.1 — route 192.168.2.0/24 + 192.168.1.0/24, but NOT 192.168.8.0/24.
+        let steps = configure_steps(
+            "fd37:5753:430c:4aee:b66a:e44d:1c00:2".parse().unwrap(),
+            120,
+            Some("192.168.2.11".parse().unwrap()),
+            &["192.168.1.1".parse().unwrap()],
+            "192.168.8.1".parse().unwrap(),
+        );
+        let p = progs(&steps);
+        // Order: link up → disable_ipv6 → v6 addr → v4 addr → rp_filter×2 → routes.
+        assert_eq!(p[0], ("ip", vec!["link", "set", IFACE, "up"]));
+        assert_eq!(p[1].0, "sysctl");
+        assert!(p[1].1[1].ends_with("disable_ipv6=0"));
+        assert!(p[2].1.contains(&"fd37:5753:430c:4aee:b66a:e44d:1c00:2/120"));
+        assert!(p[3].1.contains(&"192.168.2.11/32"));
+        // Routes: both remote /24s present, the underlay /24 absent.
+        let routes: Vec<&str> = steps
+            .iter()
+            .filter(|s| s.args.first().map(String::as_str) == Some("route"))
+            .map(|s| s.args[2].as_str())
+            .collect();
+        assert!(routes.contains(&"192.168.2.0/24"));
+        assert!(routes.contains(&"192.168.1.0/24"));
+        assert!(!routes.contains(&"192.168.8.0/24"), "must not route the underlay endpoint's subnet");
+    }
+
+    #[test]
+    fn ipv4_only_needs_no_disable_ipv6_step() {
+        let steps = configure_steps("10.2.0.5".parse().unwrap(), 32, None, &[], "10.9.9.1".parse().unwrap());
+        assert_eq!(steps[0].args.last().unwrap(), "up");
+        assert!(!steps.iter().any(|s| s.program == "sysctl" && s.args[1].contains("disable_ipv6")));
+        assert!(steps.iter().any(|s| s.args.first().map(String::as_str) == Some("addr") && s.args[2] == "10.2.0.5/32"));
+    }
+
+    #[test]
+    fn a_route_matching_the_endpoint_subnet_is_skipped() {
+        // client_ip shares the endpoint's /24 → no route for it (would loop the WireGuard underlay).
+        let steps = configure_steps(
+            "10.0.0.2".parse().unwrap(),
+            32,
+            Some("192.168.4.50".parse().unwrap()),
+            &[],
+            "192.168.4.1".parse().unwrap(),
+        );
+        assert!(!steps.iter().any(|s| s.args.first().map(String::as_str) == Some("route")));
     }
 }

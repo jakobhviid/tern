@@ -423,13 +423,25 @@ fn stun_server(ice: &[IceServer]) -> String {
         .unwrap_or_else(|| "stun.cloudflare.com:3478".to_string())
 }
 
-/// Run one full Teleport connection attempt from a paired [`Session`] to a **running** [`dataplane::Tunnel`]:
-/// bind a fresh UDP socket, gather ICE candidates (host + reflexive), send the CONNECT offer, answer the
-/// console's nomination, then bring up `if_name` as a TUN device carrying userspace WireGuard. This is the
-/// single code path shared by the live probe and the daemon's Teleport backend; the reusable session comes
-/// from a prior [`Broker::pair`] (invite redeem), so no invite is consumed here. Needs `CAP_NET_ADMIN` for the
-/// TUN device.
-pub async fn establish(broker: &Broker, session: &Session, if_name: &str) -> Result<dataplane::Tunnel> {
+/// A running Teleport connection plus the addressing the backend needs to configure routing/DNS. Validated
+/// live: the console assigns a v6 ULA overlay **and** a v4 `client_ip` on its LAN; the remote subnets are
+/// reached through the tunnel, while the ICE-nominated `endpoint`'s own subnet must **not** be routed into it.
+pub struct Connection {
+    pub tunnel: dataplane::Tunnel,
+    /// The v4 address the console assigned us on its LAN — the source for tunneled v4 traffic.
+    pub client_ip: Option<std::net::Ipv4Addr>,
+    /// DNS servers the console advertised (on the remote LAN).
+    pub dns: Vec<std::net::IpAddr>,
+    /// The ICE-nominated underlay endpoint — its subnet is the local transport path, never routed via the TUN.
+    pub endpoint: SocketAddr,
+}
+
+/// Run one full Teleport connection attempt from a paired [`Session`] to a running [`Connection`]: bind a
+/// fresh UDP socket, gather ICE candidates (host + reflexive), send the CONNECT offer, answer the console's
+/// nomination, then bring up `if_name` as a TUN device carrying userspace WireGuard. This is the single code
+/// path the daemon's Teleport backend uses; the reusable session comes from a prior [`Broker::pair`] (invite
+/// redeem), so no invite is consumed here. Needs `CAP_NET_ADMIN` for the TUN device.
+pub async fn establish(broker: &Broker, session: &Session, if_name: &str) -> Result<Connection> {
     let socket = tokio::net::UdpSocket::bind("0.0.0.0:0")
         .await
         .map_err(|e| Error::Other(anyhow::anyhow!("teleport: couldn't open a local socket: {e}")))?;
@@ -458,7 +470,13 @@ pub async fn establish(broker: &Broker, session: &Session, if_name: &str) -> Res
         .ok_or(Error::VpnUnreachable)?;
     tracing::info!(%nominated, "teleport: endpoint nominated; bringing up tunnel");
     let wg_config = resp.to_wireguard_config(&kp, &nominated.to_string());
-    dataplane::Tunnel::start(socket, nominated, &wg_config, if_name, &stun_secret).await
+    let tunnel = dataplane::Tunnel::start(socket, nominated, &wg_config, if_name, &stun_secret).await?;
+    Ok(Connection {
+        tunnel,
+        client_ip: resp.client_ip.parse().ok(),
+        dns: resp.dns_addrs.iter().filter_map(|d| d.parse().ok()).collect(),
+        endpoint: nominated,
+    })
 }
 
 fn invalid(input: &str) -> Error {
