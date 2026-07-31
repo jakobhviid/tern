@@ -66,7 +66,10 @@ fn configure_steps(address: IpAddr, prefix: u8, client_ip: Option<Ipv4Addr>, dns
     steps.push(sysctl("net.ipv4.conf.all.rp_filter=2".into()));
     steps.push(sysctl(format!("net.ipv4.conf.{IFACE}.rp_filter=0")));
 
-    // Route the remote v4 subnets through the tunnel, never the underlay endpoint's own /24.
+    // Route the remote v4 subnets through the tunnel, never the underlay endpoint's own /24. (Edge for the
+    // future full-tunnel work: if a routed /24 also matches a subnet the host is *locally* on — multi-homed —
+    // this would divert local traffic into the tunnel. The endpoint exclusion covers the usual case, the
+    // underlay LAN; broadening the routes will need to read the host's local subnets too.)
     let endpoint_net = match endpoint {
         IpAddr::V4(v4) => Some(slash24(v4)),
         _ => None,
