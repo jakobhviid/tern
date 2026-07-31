@@ -10,7 +10,7 @@
 //! Passing a `teleport.ui.link` invite consumes its single-use pairing and saves the session next to it;
 //! passing a saved session JSON path reuses it (no invite needed). Ctrl-C tears the tunnel down.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -102,6 +102,31 @@ async fn main() -> anyhow::Result<()> {
     }
     println!("configured {IFACE} = {cidr}{}", if resp.client_ip.is_empty() { String::new() } else { format!(" + {}", resp.client_ip) });
 
+    // Route the remote v4 subnets through the tunnel. The console placed us at client_ip on its LAN and its
+    // DNS sits on another subnet — both are reached *through* tern0. We must NOT route the underlay endpoint's
+    // /24 (that's our local LAN + the WireGuard transport path) or packets would loop.
+    let endpoint_net = match nominated.ip() {
+        IpAddr::V4(v4) => Some(slash24(v4)),
+        _ => None,
+    };
+    let mut v4_targets: Vec<Ipv4Addr> = Vec::new();
+    if let Ok(c) = resp.client_ip.parse::<Ipv4Addr>() {
+        v4_targets.push(c);
+    }
+    v4_targets.extend(resp.dns_addrs.iter().filter_map(|d| d.parse::<Ipv4Addr>().ok()));
+    let mut routed: Vec<String> = Vec::new();
+    for t in &v4_targets {
+        let net = slash24(*t);
+        if Some(&net) == endpoint_net.as_ref() || routed.contains(&net) {
+            continue;
+        }
+        run("ip", &["route", "replace", &net, "dev", IFACE]);
+        routed.push(net);
+    }
+    if !routed.is_empty() {
+        println!("routed remote v4 subnets via {IFACE}: {}", routed.join(", "));
+    }
+
     // Wait for the WireGuard handshake (polling the pump's live stats), then run the console's own health
     // check — a UDP echo through the tunnel — routing the echo target via the interface first.
     print!("waiting for the WireGuard handshake");
@@ -116,6 +141,20 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     println!("\nhandshake: {}", if handshook { "✓ completed" } else { "✗ NOT completed" });
+
+    // The real path is v4: ping the remote DNS server (a known live LAN host behind the console), sourced
+    // from our client_ip so the console's cryptokey routing accepts it.
+    let mut v4_ok = false;
+    if let (Ok(src), Some(dst)) =
+        (resp.client_ip.parse::<Ipv4Addr>(), resp.dns_addrs.iter().find_map(|d| d.parse::<Ipv4Addr>().ok()))
+    {
+        v4_ok = Command::new("ping")
+            .args(["-c", "3", "-W", "3", "-I", &src.to_string(), &dst.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        println!("v4 ping {dst} (from {src}) → {}", if v4_ok { "✓ replied" } else { "✗ no reply" });
+    }
 
     let mut echo_ok = false;
     if let Ok(echo_dst) = si.udp_echo_addr.parse::<IpAddr>() {
@@ -142,11 +181,11 @@ async fn main() -> anyhow::Result<()> {
         s.tx_bytes.load(Ordering::Relaxed), s.rx_bytes.load(Ordering::Relaxed)
     );
 
-    let data_plane_works = handshook && s.rx_bytes.load(Ordering::Relaxed) > 0;
-    if echo_ok || data_plane_works {
+    let returned = s.rx_bytes.load(Ordering::Relaxed) > 0 || s.tun_out.load(Ordering::Relaxed) > 0;
+    if v4_ok || echo_ok || (handshook && returned) {
         println!("\nRESULT: ✅ Teleport tunnel WORKS end-to-end (handshake + return traffic through the data plane).");
     } else if handshook {
-        println!("\nRESULT: ◐ handshake completed but no return traffic — likely a routing/target issue, not the crypto.");
+        println!("\nRESULT: ◐ handshake completed but no return traffic — routing/target, not the crypto. Try a different remote host, or check the console accepts our source address (cryptokey routing).");
     } else {
         println!("\nRESULT: ✗ no WireGuard handshake — the pump sent to {nominated} but got nothing back (path/endpoint).");
     }
@@ -154,6 +193,12 @@ async fn main() -> anyhow::Result<()> {
     tunnel.stop().await;
     println!("tunnel torn down; {IFACE} removed.");
     Ok(())
+}
+
+/// The `/24` containing `a`, as an `ip route` CIDR string.
+fn slash24(a: Ipv4Addr) -> String {
+    let o = a.octets();
+    format!("{}.{}.{}.0/24", o[0], o[1], o[2])
 }
 
 /// Send a datagram to the console's UDP-echo server through the tunnel (source-bound to our overlay address)
