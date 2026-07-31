@@ -106,6 +106,8 @@ impl TernService {
         conf: String,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> String {
+        self.engine.lock().await.begin_connecting();
+        self.emit_changed(&emitter).await;
         let res = self.engine.lock().await.import_wireguard(conf).await;
         self.finish(res, &emitter).await
     }
@@ -115,12 +117,16 @@ impl TernService {
         self.finish(res, &emitter).await
     }
 
-    /// Turn on Access for a console.
+    /// Turn on Access for a console. Reflect "Turning on…" before the (several-second) bring-up so the tray/
+    /// GUI toggle doesn't sit frozen — the reconnect path for a stored Teleport session runs the full data
+    /// plane here.
     async fn connect(
         &self,
         console_id: String,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> String {
+        self.engine.lock().await.begin_connecting();
+        self.emit_changed(&emitter).await;
         let res = self.engine.lock().await.connect(&console_id).await;
         self.finish(res, &emitter).await
     }
