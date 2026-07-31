@@ -168,6 +168,17 @@ async fn main() -> anyhow::Result<()> {
         println!("v4 ping {dst} (from {src}) → {}", if v4_ok { "✓ replied" } else { "✗ no reply" });
     }
 
+    // The real test — actual app traffic to a real service. The remote DNS server (192.168.1.1) is known to
+    // be listening, so a DNS query over the tunnel, sourced from client_ip, proves usable connectivity in a
+    // way ICMP (with its raw-socket id-matching quirks) can't.
+    let mut dns_ok = false;
+    if let (Ok(src), Some(server)) =
+        (resp.client_ip.parse::<IpAddr>(), resp.dns_addrs.iter().find_map(|d| d.parse::<IpAddr>().ok()))
+    {
+        dns_ok = dns_query(src, server).await;
+        println!("dns query example.com @ {server} (from {src}) → {}", if dns_ok { "✓ ANSWERED" } else { "✗ no answer" });
+    }
+
     let mut echo_ok = false;
     if let Ok(echo_dst) = si.udp_echo_addr.parse::<IpAddr>() {
         run("ip", &["route", "replace", &si.udp_echo_addr, "dev", IFACE]);
@@ -212,7 +223,7 @@ async fn main() -> anyhow::Result<()> {
     sh("sh", &["-c", "grep '^Icmp' /proc/net/snmp"]);
 
     let returned = s.rx_bytes.load(Ordering::Relaxed) > 0 || s.tun_out.load(Ordering::Relaxed) > 0;
-    if v4_ok || echo_ok || (handshook && returned) {
+    if dns_ok || v4_ok || echo_ok || (handshook && returned) {
         println!("\nRESULT: ✅ Teleport tunnel WORKS end-to-end (handshake + return traffic through the data plane).");
     } else if handshook {
         println!("\nRESULT: ◐ handshake completed but no return traffic — routing/target, not the crypto. Try a different remote host, or check the console accepts our source address (cryptokey routing).");
@@ -223,6 +234,32 @@ async fn main() -> anyhow::Result<()> {
     tunnel.stop().await;
     println!("tunnel torn down; {IFACE} removed.");
     Ok(())
+}
+
+/// A minimal DNS `A` query for `name` (id 0x1234, recursion desired).
+fn dns_query_bytes(name: &str) -> Vec<u8> {
+    let mut q = vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    for label in name.split('.') {
+        q.push(label.len() as u8);
+        q.extend_from_slice(label.as_bytes());
+    }
+    q.push(0); // root label
+    q.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]); // QTYPE=A, QCLASS=IN
+    q
+}
+
+/// Send a real DNS query to `server:53` through the tunnel (source-bound to `src`) and report whether a
+/// matching response comes back — a genuine app-traffic test against a known-listening service.
+async fn dns_query(src: IpAddr, server: IpAddr) -> bool {
+    let Ok(sock) = tokio::net::UdpSocket::bind(SocketAddr::new(src, 0)).await else { return false };
+    if sock.send_to(&dns_query_bytes("example.com"), SocketAddr::new(server, 53)).await.is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 512];
+    matches!(
+        tokio::time::timeout(Duration::from_secs(3), sock.recv_from(&mut buf)).await,
+        Ok(Ok((n, _))) if n > 2 && buf[0] == 0x12 && buf[1] == 0x34
+    )
 }
 
 /// The `/24` containing `a`, as an `ip route` CIDR string.
