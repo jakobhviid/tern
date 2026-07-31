@@ -1,5 +1,21 @@
 # TODO — status & handoff
 
+> ## ⏳ WELCOME BACK — one test to run (2026-07-31)
+> The **Teleport tunnel is validated working end-to-end** (a DNS query answered through it live). The daemon is
+> fully wired; the only unconfirmed piece is whether the **capability fix** lets the *daemon* (not just a sudo
+> probe) bring the tunnel up. Run:
+> ```
+> cargo build --release --bin ternd && install -m755 target/release/ternd ~/.local/bin/ternd \
+>   && sudo setcap cap_net_admin+eip ~/.local/bin/ternd && systemctl --user restart tern.service && sleep 1 \
+>   && tern redeem https://teleport.ui.link/<FRESH-INVITE> && sleep 1 && tern status \
+>   && dig +short +timeout=3 @192.168.1.1 example.com
+> ```
+> Want `tern status → Access on` + a `dig` answer. If it says **"privilege required"**, the ambient-cap raise
+> didn't take — `journalctl --user -u tern.service | grep -i cap` shows why. If **Access on** but you can't
+> reach some subnet, that's the known split-tunnel limit (next: full-tunnel routing — deliberately not enabled
+> unattended). **Next features after this confirms:** full/broad routing to all home VLANs, then drives over
+> the tunnel (SMB/GVfs).
+
 _Updated 2026-07-30, after the **first real bring-up on a Bazzite / Fedora-Atomic / GNOME box** and a deep
 investigation of the **actual** UniFi auth + VPN flow. This replaces the old pre-Linux work queue._
 
