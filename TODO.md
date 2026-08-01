@@ -1,22 +1,37 @@
 # TODO — status & handoff
 
-> ## ⏳ WELCOME BACK — one test to run (2026-07-31)
-> The **Teleport tunnel is validated working end-to-end** (a DNS query answered through it live). The daemon is
-> fully wired; the only unconfirmed piece is whether the **capability fix** lets the *daemon* (not just a sudo
-> probe) bring the tunnel up. Run:
+> ## ⏸ PAUSED — pick up here (2026-08-01)
+> New here (human or LLM)? **Read [`HANDOVER.md`](HANDOVER.md) first** — it bootstraps you with everything the
+> last session learned. Short version: the **Teleport VPN is validated working end-to-end** (a DNS query answered
+> through the tunnel live). The daemon is fully wired. The one unconfirmed thing is whether the **capability fix**
+> lets the *daemon* (not just a sudo probe) bring the tunnel up.
+>
+> ### The one test to run (owner, on the Bazzite box)
 > ```
 > cargo build --release --bin ternd && install -m755 target/release/ternd ~/.local/bin/ternd \
 >   && sudo setcap cap_net_admin+eip ~/.local/bin/ternd && systemctl --user restart tern.service && sleep 1 \
 >   && tern redeem https://teleport.ui.link/<FRESH-INVITE> && sleep 1 && tern status \
 >   && dig +short +timeout=3 @192.168.1.1 example.com
 > ```
-> Want `tern status → Access on` + a `dig` answer. If it says **"needs permission"/"privilege required"**, the
-> ambient-cap raise didn't take — `journalctl --user -u tern.service | grep -i cap` shows why. **Good news:** a
-> failed bring-up now **keeps the paired session**, so after fixing the cap just run `tern connect` (or restart
-> the service) — **no new invite needed**; you only pay one invite per successful pairing. A spent invite now
-> reports "This invite has already been used" instead of a raw HTTP 400. If **Access on** but you can't reach
-> some subnet, that's the known split-tunnel limit. **Next features after this confirms:** full/broad routing to
-> all home VLANs, then drives over the tunnel (SMB/GVfs).
+> Want `tern status → Access on` + a `dig` answer. A failed bring-up **keeps the paired session** (retry with
+> `tern connect`, no new invite). `journalctl --user -u tern.service | grep -i cap` shows if the ambient-cap
+> raise took.
+>
+> ### Task checklist
+> - [x] Teleport control plane (invite → pair → session → ICE → connect → nomination) — **live-validated**
+> - [x] Data plane (boringtun over ICE socket → TUN, consent-freshness) — **live-validated (DNS through tunnel)**
+> - [x] `TeleportVpn` backend + engine lifecycle + ternd/CLI/GUI/tray wiring
+> - [x] Daemon capability handling (`setcap +eip` + ambient raise before runtime & per worker thread)
+> - [x] Interface config: v6 overlay + v4 client_ip, split-tunnel routes (excl. underlay /24), DNS via resolvectl
+> - [x] Error UX (EPERM→"needs permission", 4xx→"invite already used"), session-retention, no-freeze reconnect
+> - [ ] **Confirm the daemon path** (the test above) — the only open verification
+> - [ ] **Broad/full-tunnel routing** to all home VLANs (needs live; first read the `RUST_LOG=debug` raw response
+>       for console-advertised routes; exclude any /24 the host is locally on — see stage ⑥ below)
+> - [ ] **Drives over the tunnel** (SMB via GVfs; discovery for the accountless Teleport case is unresolved — see
+>       "detect shares" in `docs/09` §12)
+> - [ ] Off-LAN / TURN validation (all live tests so far were on-LAN → direct candidate only)
+> - [ ] GUI `has_console` flag so a stored-but-disconnected session shows the main view in the window (minor;
+>       tray already covers it — see the note at `show_main` in `tern-gui/src/main.rs`)
 
 _Updated 2026-07-30, after the **first real bring-up on a Bazzite / Fedora-Atomic / GNOME box** and a deep
 investigation of the **actual** UniFi auth + VPN flow. This replaces the old pre-Linux work queue._
